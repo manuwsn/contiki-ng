@@ -117,7 +117,7 @@ dec_to_bcd(uint8_t val)
 static uint8_t
 check_leap_year(uint8_t val)
 {
-  return ((val % 4) && (val % 100)) || (val % 400);
+  return ((val % 4 == 0) && (val % 100 != 0)) || (val % 400 == 0);
 }
 /*---------------------------------------------------------------------------*/
 static uint16_t
