@@ -267,12 +267,12 @@ ab08_check_td_format(simple_td_map *data, uint8_t alarm_state)
   return AB08_SUCCESS;
 }
 /*---------------------------------------------------------------------------*/
-void rtcc_set_time_date(simple_td_map *data, uint64_t time){
+int8_t rtcc_sec_to_date(simple_td_map *data, uint64_t time){
 
   memset(data,0,sizeof(simple_td_map));
   data->weekdays = 3; // Thuesday : first day of 1/1/70
-  data->years = 1970; // first year of unix date
-  
+  data->years = 70; // first year of unix date
+  data->century = 19;
   /* time is in seconds, compute the seconds after the last minute */ 
   data->seconds = time % 60;
   // adjust time to a multiple of minutes
