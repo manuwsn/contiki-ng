@@ -338,15 +338,7 @@ int8_t rtcc_get_time_date(simple_td_map *data);
  * \           AB08_ERROR failed to set time/date (enable DEBUG for more info)
  */
 int8_t rtcc_print(uint8_t value);
-/**
- * \brief Configure the RTCC to match an alarm counter
- * \param data date and time values (in decimal) to match against
- * \param time seconds since 1/1/1970
- * \return
- * \           AB08_SUCCESS date/time set
- * \           AB08_ERROR failed to set time/date (enable DEBUG for more info)
- */
-int8_t rtcc_sec_to_date(simple_td_map *data, uint64_t time);
+
 /**
  * \brief Configure the RTCC to match an alarm counter
  * \param data date and time values (in decimal) to match against

@@ -143,13 +143,16 @@ ab08_write_reg(uint8_t reg, uint8_t *buf, uint8_t regnum)
 
   /* FIXME: Replace by single_send/burst_send */
 
+
   buff[0] = reg;
   for(i = 0; i < regnum; i++) {
     buff[(i + 1)] = buf[i];
   }
 
   i2c_master_enable();
+
   if(i2c_burst_send(AB08XX_ADDR, buff, (regnum + 1)) == I2C_MASTER_ERR_NONE) {
+
     return AB08_SUCCESS;
   }
 
@@ -162,7 +165,6 @@ write_default_config(void)
   const ab080x_register_config_t *settings;
   settings = ab080x_default_setting;
   uint8_t i, len = (sizeof(ab080x_default_setting) / sizeof(ab080x_register_config_t));
-
   for(i = 0; i < len; i++) {
     ab08_write_reg(settings[i].reg, (uint8_t *)&settings[i].val, 1);
   }
@@ -266,83 +268,7 @@ ab08_check_td_format(simple_td_map *data, uint8_t alarm_state)
 
   return AB08_SUCCESS;
 }
-/*---------------------------------------------------------------------------*/
-int8_t rtcc_sec_to_date(simple_td_map *data, uint64_t time){
 
-  memset(data,0,sizeof(simple_td_map));
-  data->weekdays = 3; // Thuesday : first day of 1/1/70
-  data->years = 70; // first year of unix date
-  data->century = 19;
-  /* time is in seconds, compute the seconds after the last minute */ 
-  data->seconds = time % 60;
-  // adjust time to a multiple of minutes
-  time -= data->seconds;
-  // convert time in minutes
-  time /= 60;
-  // then compute minutes after the last hour
-  data->minutes = time % 60;
-  //adjust time to a multiple of hours
-  time -= data->minutes;
-  // convert time in hours
-  time /= 60;
-  // then compute hours after the last day
-  data->hours = time % 24;
-  // adjust time to a multiple of days
-  time -= data->hours;
-  // convert time in days
-  time /= 24;
-  // week days are regular
-  data->weekdays += time % 7;
-  
-  // Compute leap and non leap years
-  uint64_t last_year = 0;
-  uint64_t iterator_time = 0;
-
-  while(iterator_time <= time){    
-    if (check_leap_year(data->years))
-      iterator_time += 366;
-    else
-      iterator_time += 365;
-    
-    if(iterator_time <= time)
-      data->years++;
-    else {
-    if (check_leap_year(data->years))
-      last_year = iterator_time - 366;
-    else
-      last_year = iterator_time - 365;
-    }
-  }
-  // Adjust to remaining number of days
-  // in the lat year
-  time = time - last_year;
-  iterator_time = 0;
-  int last_day;
-  while(iterator_time <= time){
-    last_day = iterator_time;
-    if(data->months == 0 || data->months == 2 ||
-       data->months == 4 || data->months == 6 ||
-       data->months == 7 || data->months == 9 ||
-       data->months == 11)
-      iterator_time += 31;
-    else {
-      if (data->months == 1){
-	if  (check_leap_year(data->years))
-	  iterator_time += 29;
-	  else
-	    iterator_time += 28;
-      } else
-	iterator_time += 30;
-    }
-    if (iterator_time < time)
-      data->months++;
-    else
-      data->day = time - last_day;
-  }
-  data->century = RTCC_CENTURY_19XX_21XX;
-  data->mode = RTCC_24H_MODE;
-  return AB08_SUCCESS;
-}
 /*---------------------------------------------------------------------------*/
 int8_t
 rtcc_set_time_date(simple_td_map *data)
@@ -998,17 +924,18 @@ static gpio_hal_event_handler_t rtcc_handler = {
 int8_t
 rtcc_init(void)
 {
+ 
+
   i2c_init(I2C_SDA_PORT, I2C_SDA_PIN, I2C_SCL_PORT, I2C_SCL_PIN,
            I2C_SCL_NORMAL_BUS_SPEED);
+
 
 #if RTCC_SET_DEFAULT_CONFIG
   write_default_config();
 #endif
-
 #if RTCC_SET_AUTOCAL
   rtcc_set_autocalibration(RTCC_AUTOCAL_17_MIN);
 #endif
-
   /* Initialize interrupts handlers */
   rtcc_int1_callback = NULL;
 
