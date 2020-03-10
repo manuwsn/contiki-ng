@@ -62,7 +62,7 @@ udp_rx_callback(struct simple_udp_connection *c,
          const uint8_t *data,
          uint16_t datalen)
 {
-  uint64_t local_time_clock_ticks = tsch_get_network_uptime_ticks();
+  // uint64_t local_time_clock_ticks = tsch_get_network_uptime_ticks();
   ltdata_t ltdata;
 
   if(datalen >= sizeof(ltdata)) {
@@ -70,11 +70,10 @@ udp_rx_callback(struct simple_udp_connection *c,
 
     LOG_INFO("Received from ");
     LOG_INFO_6ADDR(sender_addr);
-    LOG_INFO_(", created at %lu, now %lu, latency %lu clock ticks and %u V\n",
-              (unsigned long)ltdata.time,
-              (unsigned long)local_time_clock_ticks,
-              (unsigned long)(local_time_clock_ticks - ltdata.time),
-	      ltdata.voltage);
+    LOG_INFO_("created at %lu : %u, + %d : %u, %u, %u V\n",
+              (unsigned long)ltdata.time,ltdata.d1,
+	      ltdata.offset,
+              ltdata.d2, ltdata.d3,ltdata.d4);
   }
 }
 /*---------------------------------------------------------------------------*/
