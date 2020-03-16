@@ -131,6 +131,10 @@ rpl_icmp6_update_nbr_table(uip_ipaddr_t *from, nbr_table_reason_t reason, void *
 static void
 dis_input(void)
 {
+  #ifdef RPL_STATS
+  RPL_STAT(rpl_stats.received_diss++);
+  #endif
+  
   if(!curr_instance.used) {
     LOG_WARN("dis_input: not in an instance yet, discard\n");
     goto discard;
@@ -166,6 +170,9 @@ rpl_icmp6_dis_output(uip_ipaddr_t *addr)
   LOG_INFO_("\n");
 
   uip_icmp6_send(addr, ICMP6_RPL, RPL_CODE_DIS, 2);
+  #ifdef RPL_STATS
+  RPL_STAT(rpl_stats.send_diss++);
+  #endif
 }
 /*---------------------------------------------------------------------------*/
 static void
@@ -179,6 +186,10 @@ dio_input(void)
   int len;
   uip_ipaddr_t from;
 
+  #ifdef RPL_STATS
+  RPL_STAT(rpl_stats.received_dios++);
+  #endif
+  
   memset(&dio, 0, sizeof(dio));
 
   /* Set default values in case the DIO configuration option is missing. */
@@ -449,6 +460,10 @@ rpl_icmp6_dio_output(uip_ipaddr_t *uc_addr)
   LOG_INFO_("\n");
 
   uip_icmp6_send(addr, ICMP6_RPL, RPL_CODE_DIO, pos);
+  
+  #ifdef RPL_STATS
+  RPL_STAT(rpl_stats.send_dios++);
+  #endif
 }
 /*---------------------------------------------------------------------------*/
 static void
@@ -463,6 +478,10 @@ dao_input(void)
   int i;
   uip_ipaddr_t from;
 
+  #ifdef RPL_STATS
+  RPL_STAT(rpl_stats.received_daos++);
+  #endif
+  
   memset(&dao, 0, sizeof(dao));
 
   dao.instance_id = UIP_ICMP_PAYLOAD[0];
@@ -616,6 +635,10 @@ rpl_icmp6_dao_output(uint8_t lifetime)
 
   /* Send DAO to root (IPv6 address is DAG ID) */
   uip_icmp6_send(&curr_instance.dag.dag_id, ICMP6_RPL, RPL_CODE_DAO, pos);
+  
+  #ifdef RPL_STATS
+  RPL_STAT(rpl_stats.send_daos++);
+  #endif
 }
 #if RPL_WITH_DAO_ACK
 /*---------------------------------------------------------------------------*/
@@ -626,6 +649,10 @@ dao_ack_input(void)
   uint8_t instance_id;
   uint8_t sequence;
   uint8_t status;
+
+  #ifdef RPL_STATS
+  RPL_STAT(rpl_stats.received_ackdaos++);
+  #endif
 
   buffer = UIP_ICMP_PAYLOAD;
 
@@ -670,6 +697,10 @@ rpl_icmp6_dao_ack_output(uip_ipaddr_t *dest, uint8_t sequence, uint8_t status)
   LOG_INFO_(" with status %d\n", status);
 
   uip_icmp6_send(dest, ICMP6_RPL, RPL_CODE_DAO_ACK, 4);
+  
+  #ifdef RPL_STATS
+  RPL_STAT(rpl_stats.send_ackdaos++);
+  #endif
 }
 #endif /* RPL_WITH_DAO_ACK */
 /*---------------------------------------------------------------------------*/

@@ -52,6 +52,11 @@
 uip_ipaddr_t rpl_multicast_addr;
 static uint8_t rpl_leaf_only = RPL_DEFAULT_LEAF_ONLY;
 
+#if RPL_STATS
+rpl_stats_t rpl_stats;
+#endif
+
+
 /*---------------------------------------------------------------------------*/
 int
 rpl_lollipop_greater_than(int a, int b)

@@ -57,6 +57,39 @@
 #include "net/routing/rpl-lite/rpl-neighbor.h"
 #include "net/routing/rpl-lite/rpl-ext-header.h"
 #include "net/routing/rpl-lite/rpl-timers.h"
+#if RPL_STATS
+/* Statistics for fault management. */
+struct rpl_stats {
+  uint16_t mem_overflows;
+  uint16_t local_repairs;
+  uint16_t global_repairs;
+  uint16_t malformed_msgs;
+  uint16_t resets;
+  uint16_t parent_switch;
+  uint16_t forward_errors;
+  uint16_t loop_errors;
+  uint16_t loop_warnings;
+  uint16_t root_repairs;
+  uint16_t send_dios;
+  uint16_t received_dios;
+  uint16_t send_diss;
+  uint16_t received_diss;
+  uint16_t send_daos;
+  uint16_t received_daos;
+  uint16_t send_ackdaos;
+  uint16_t received_ackdaos;
+};
+typedef struct rpl_stats rpl_stats_t;
+
+extern rpl_stats_t rpl_stats;
+#endif
+
+#if RPL_STATS
+#define RPL_STAT(code)	(code)
+#else
+#define RPL_STAT(code)
+#endif /* RPL_CONF_STATS */
+
 
 /********** Public symbols **********/
 
