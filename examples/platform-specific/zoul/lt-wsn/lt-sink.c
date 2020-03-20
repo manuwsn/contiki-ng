@@ -21,7 +21,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-#include <lt-data.h>
+#include "lt-data.h"
 
 #define LOG_MODULE "LT-SINK"
 #define LOG_LEVEL LOG_LEVEL_INFO
@@ -62,18 +62,84 @@ udp_rx_callback(struct simple_udp_connection *c,
          const uint8_t *data,
          uint16_t datalen)
 {
-  // uint64_t local_time_clock_ticks = tsch_get_network_uptime_ticks();
-  ltdata_t ltdata;
+  
+  LOG_INFO("Received packet of %d bytes\n",datalen);
+  int index = 0;
+  for(int i = 0; i < datalen;i++)
+    printf("%d ", data[i]);
+  printf("\n");
 
-  if(datalen >= sizeof(ltdata)) {
-    memcpy(&ltdata, data, sizeof(ltdata));
-
+  if(datalen >= sizeof(ltdata_t)) {
+    char d_type;
+    uint64_t time = 0;
+    d_type = data[0];
+    data++;
+    index++;
+    memcpy(&time, data, sizeof(uint64_t));
+    data += sizeof(uint64_t);
+    index +=  sizeof(uint64_t);
+    uint32_t offset = 0;
+    memcpy(&offset, data, sizeof(uint32_t));
+    data +=  sizeof(uint32_t);
+    index +=  sizeof(uint32_t);
     LOG_INFO("Received from ");
     LOG_INFO_6ADDR(sender_addr);
-    LOG_INFO_("created at %lu : %u, + %d : %u, %u, %u V\n",
-              (unsigned long)ltdata.time,ltdata.d1,
-	      ltdata.offset,
-              ltdata.d2, ltdata.d3,ltdata.d4);
+    LOG_INFO("\n");
+    LOG_INFO("Packet type: %c , time: %llu, offset: %lu\n", d_type, time, offset);
+
+#if defined(UIP_STATS) || defined(RPL_STATS)
+      ltstatsdata_t ltstatsdata;
+#endif
+
+    switch(d_type){
+    case 'S':
+#if defined(UIP_STATS) || defined(RPL_STATS)
+      //ltstatsdata_t ltstatsdata;
+      memcpy(&ltstatsdata, data, sizeof(ltstatsdata_t));
+#ifdef UIP_STATS
+      LOG_INFO("IP out: %d, IP in: %d, IP fwd: %d, IP drop: %d\n",
+	       ltstatsdata.uip_stats[SEND_IP],ltstatsdata.uip_stats[RCV_IP],
+	       ltstatsdata.uip_stats[FWD_IP],ltstatsdata.uip_stats[DROP_IP]);
+#endif
+#ifdef RPL_STATS
+      LOG_INFO("DIO out: %d, DIO in: %d, DAO out: %d, DAO in: %d, DIS out: %d, \
+DIS in: %d, ACKDAO out: %d, ACKDAO in: %d\n",
+	       ltstatsdata.rpl_stats[SEND_DIO],  ltstatsdata.rpl_stats[RCV_DIO], 
+	       ltstatsdata.rpl_stats[SEND_DAO],  ltstatsdata.rpl_stats[RCV_DAO],
+	       ltstatsdata.rpl_stats[SEND_DIS],  ltstatsdata.rpl_stats[RCV_DIS], 
+	       ltstatsdata.rpl_stats[SEND_ACKDAO],  ltstatsdata.rpl_stats[RCV_ACKDAO]);
+#endif
+      data += sizeof(ltstatsdata_t);
+      index += sizeof(ltstatsdata_t);
+#endif
+      break;
+    case 'D':
+      while(index < datalen){
+	uint16_t num_rec = 0;
+	memcpy(&num_rec, data, sizeof(uint16_t));
+	data += sizeof(uint16_t);
+	index += sizeof(uint16_t);
+	ltdatarcv_t ltdata;
+	memcpy(&ltdata, data, sizeof(ltdatarcv_t));
+	data += sizeof(ltdatarcv_t);
+	index += sizeof(ltdatarcv_t);
+	
+	LOG_INFO("%lu V\n", ltdata.voltage);
+	if(ltdata.sensors[SENSOR_TYPE] == BMP180)
+	  LOG_INFO("Tmp: %d, P: %d\n",
+		   ltdata.sensors[DATA_1],
+		   ltdata.sensors[DATA_2]);
+	if(ltdata.sensors[SENSOR_TYPE] == SHT25)
+	    LOG_INFO("Tmp: %d, H: %d\n",
+		     ltdata.sensors[DATA_1],
+		     ltdata.sensors[DATA_2]);
+	if(ltdata.sensors[SENSOR_TYPE] == DHT22)
+	  LOG_INFO("Tmp: %d, H: %d\n",
+		   ltdata.sensors[DATA_1],
+		   ltdata.sensors[DATA_2]);
+      }
+      break;
+    }
   }
 }
 /*---------------------------------------------------------------------------*/
@@ -93,6 +159,8 @@ PROCESS_THREAD(node_process, ev, data)
   simple_udp_register(&client_conn, UDP_CLIENT_PORT, NULL,
                       UDP_SERVER_PORT, NULL);
 
+
+  
   NETSTACK_MAC.on();
 
   etimer_set(&periodic_timer, random_rand() % SEND_INTERVAL);

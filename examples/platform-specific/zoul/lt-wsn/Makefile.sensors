@@ -1,0 +1,32 @@
+ifeq ($(findstring bmp180, $(SENSOR)), bmp180)
+CFLAGS += -DSENSOR_CONF_BMP180
+endif
+ifeq ($(findstring pir, $(SENSOR)), pir)
+CFLAGS += -DSENSOR_CONF_PIR
+endif
+ifeq ($(findstring sht25, $(SENSOR)), sht25)
+CFLAGS += -DSENSOR_CONF_SHT25
+endif
+ifeq ($(findstring dht22, $(SENSOR)), dht22)
+CFLAGS += -DSENSOR_CONF_DHT22
+endif
+ifeq ($(findstring ldr, $(SENSOR)), ldr)
+CFLAGS += -DSENSOR_CONF_LDR
+endif
+
+ifdef PERIOD
+CFLAGS += -DPERIOD=$(PERIOD)
+endif
+
+ifdef RPLSTATS
+CFLAGS += -DRPL_CONF_STATS=1
+endif
+
+ifdef UIPSTATS
+CFLAGS += -DUIP_CONF_STATS=1
+endif
+
+ifdef POWERMGMT
+CFLAGS += -DCONF_POWERMGMT=1
+endif
+

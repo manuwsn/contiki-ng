@@ -38,7 +38,7 @@
 
 /*---------------------------------------------------------------------------*/
 static struct etimer shutdown_timer,
-  init_led_timer, sending_led_timer, et;
+  init_led_timer, sending_led_timer;
 /*---------------------------------------------------------------------------*/
 /* RE-Mote revision B, low-power PIC version */
 #define PM_EXPECTED_VERSION               0x20
@@ -52,50 +52,18 @@ static struct etimer shutdown_timer,
 static uint8_t rtc_buffer[sizeof(simple_td_map)];
 static simple_td_map *simple_td = (simple_td_map *)rtc_buffer;
 
-static uint16_t voltage;
 static uint64_t network_uptime;
-static int offset;
+static uint32_t offset;
 
-static int tot_steps, cur_step, clear_to_send, on_network, next_awake_set, resetted;
+static int tot_steps, cur_step, clear_to_send, on_network, resetted;
 
-static char CFS_EOF = (char) -1, conf[4];
-static int fdata, fconf;
+static char CFS_EOF = (char) -1;
 /*---------------------------------------------------------------------------*/
 static struct simple_udp_connection client_conn;
 
 PROCESS(node_process, "RPL Node");
 AUTOSTART_PROCESSES(&node_process);
 /*---------------------------------------------------------------------------*/
-static uint16_t get_voltage() {
-  
-  static uint8_t aux;
-  static uint16_t voltage;
-  
-  aux = 0;
-  
-  /* Initialize the power management block and signal the low-power PIC */
-  if(pm_enable() != PM_SUCCESS) {
-    printf("PM: Failed to initialize\n");
-    return 0;
-  }
-  /* Retrieve the firmware version and check expected */
-  if((pm_get_fw_ver(&aux) == PM_ERROR) ||
-     (aux != PM_EXPECTED_VERSION)) {
-    printf("PM: unexpected version 0x%02X\n", aux);
-    return 0;
-  }
-  
-  printf("PM: firmware version 0x%02X OK\n", aux);
-  
-  /* Read the battery voltage level */
-  if(pm_get_voltage(&voltage) != PM_SUCCESS) {
-    printf("PM: error retrieving voltage\n");
-    return 0;
-  }
-  
-  printf("PM: Voltage (raw) = %u\n", voltage);
-  return voltage;
-}
 
 int first_step(){
   return cur_step == 1;
@@ -104,19 +72,23 @@ int last_step(){
   return cur_step == tot_steps;
 }
 void inc_step(){
-  cur_step++;
-  fconf = cfs_open("root/run", CFS_WRITE);   
-  cfs_seek(fconf, 4, CFS_SEEK_SET);
+  char conf[4];
   memset(conf,0,4);
+  cur_step++;
+  int fconf = cfs_open("root/run", CFS_WRITE);   
+  cfs_seek(fconf, 4, CFS_SEEK_SET);
   memcpy(conf, &cur_step,4);
   cfs_write(fconf, conf, 4);
   cfs_write(fconf, &CFS_EOF, 1);
   cfs_close(fconf);
+  LOG_INFO("inc step last\n");
 }
 
 void raz_step(){
+  char conf[4];
+  memset(conf,0,4);
   cur_step = 1;
-  fconf = cfs_open("root/run", CFS_WRITE);   
+  int fconf = cfs_open("root/run", CFS_WRITE);   
   cfs_seek(fconf, 4, CFS_SEEK_SET);
   memset(conf,0,4);
   memcpy(conf, &cur_step,4);
@@ -124,8 +96,8 @@ void raz_step(){
   cfs_write(fconf, &CFS_EOF, 1);
   cfs_close(fconf);
 }
-void init_data(uint64_t net_time, int ofst){
-  fdata = cfs_open("root/data", CFS_WRITE|CFS_APPEND);
+void init_data(uint64_t net_time, uint32_t ofst){
+  int fdata = cfs_open("root/data", CFS_WRITE|CFS_APPEND);
   char char_time[8];
   char char_offset[4];
   memset(char_time, 0, 8);
@@ -137,17 +109,42 @@ void init_data(uint64_t net_time, int ofst){
   cfs_write(fdata, &CFS_EOF, 1);
   cfs_close(fdata);
 }
-void record_data(){  
-  fdata = cfs_open("root/data", CFS_WRITE |  CFS_APPEND);
+void record_sensor_data(){  
+  int fdata = cfs_open("root/data", CFS_WRITE |  CFS_APPEND);
   cfs_seek(fdata, -1, CFS_SEEK_END);
-  uint16_t vlt = get_voltage();
-  char char_vlt[2];
-  memset(char_vlt, 0, 2);
-  memcpy(char_vlt, &vlt,2);
-  cfs_write(fdata, char_vlt,2);
+  ltdata_t ltdata;
+  memset(&ltdata, 0, sizeof(ltdata_t));
+  ltdata_read_sensor_data(&ltdata);
+  cfs_write(fdata, &ltdata,sizeof(ltdata_t));
   cfs_write(fdata, &CFS_EOF, 1);
   cfs_close(fdata);
 }
+void get_stats_data(ltstatsdata_t * ltsd){
+  int fstats = cfs_open("root/stats", CFS_READ);
+  cfs_read(fstats, ltsd, sizeof(ltstatsdata_t));
+  cfs_close(fstats);
+}
+void update_stats_data(){
+  ltstatsdata_t ltsd, oldltsd;
+  ltdata_read_stats_data(&ltsd);
+  get_stats_data(&oldltsd);
+  ltdata_update_stats_data(&ltsd,&oldltsd);
+  cfs_remove("root/stats");
+  int fstats = cfs_open("root/stats", CFS_WRITE |  CFS_APPEND);
+  cfs_write(fstats, &ltsd, sizeof(ltstatsdata_t));
+  cfs_write(fstats, &CFS_EOF, 1);
+  cfs_close(fstats);
+}
+void record_stats_data(){  
+  int fstats = cfs_open("root/stats", CFS_WRITE |  CFS_APPEND);
+  cfs_seek(fstats, -1, CFS_SEEK_END);
+  ltstatsdata_t ltstatsdata;
+  memset(&ltstatsdata, 0, sizeof(ltstatsdata_t));
+  ltdata_read_stats_data(&ltstatsdata);
+  cfs_write(fstats, &ltstatsdata,sizeof(ltstatsdata_t));
+  cfs_write(fstats, &CFS_EOF, 1);
+  cfs_close(fstats);
+} 
 void shutdown_to_next_step(){
   uint64_t some_time = SLEEP_DURATION;
       
@@ -164,6 +161,9 @@ void shutdown_to_next_step(){
   } else {
     printf("PM: error shutting down the system!\n");
   }
+}
+void shutdown_to_first_step(uint64_t nt){
+  
 }
 /*---------------------------------------------------------------------------*/
 PROCESS_THREAD(node_process, ev, data)
@@ -182,7 +182,7 @@ PROCESS_THREAD(node_process, ev, data)
      If not present that is the first boot and 
      waits button pressed few seconds */
 
-  fconf = cfs_opendir(&dirp,"root");
+  int fconf = cfs_opendir(&dirp,"root");
   fconf = cfs_readdir(&dirp, &dirent);
 
   /** First Boot and never seen a network **/
@@ -221,8 +221,10 @@ PROCESS_THREAD(node_process, ev, data)
   
   /** Read the current and total steps **/
   
-  fconf = cfs_open("root/run", CFS_READ);
+  char conf[4];
   memset(conf,0,4);
+  
+  fconf = cfs_open("root/run", CFS_READ);
   cfs_read(fconf, &conf, 4);
   tot_steps = 0;
   memcpy(&tot_steps, conf, 4);
@@ -238,15 +240,15 @@ PROCESS_THREAD(node_process, ev, data)
   
   if (!first_step()){  // First step needs network access
     if(!last_step()) { // sensing but no transmit : sense and sleep
-      record_data();
-      inc_step();      
-      leds_on(LEDS_GREEN);
-      etimer_set(&et, CLOCK_SECOND /2);
+      record_sensor_data(); // just record sensor data
+      inc_step();      // prepare next boot or step
+      leds_on(LEDS_BLUE);
+      struct etimer et;
+      etimer_set(&et, CLOCK_SECOND);
       PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&et));
       shutdown_to_next_step();
     }
     else {  // sensing and transmit
-      record_data();
       clear_to_send = 1;
     }
   }
@@ -258,11 +260,8 @@ PROCESS_THREAD(node_process, ev, data)
   /* Initialize UDP connections */
   simple_udp_register(&client_conn, UDP_CLIENT_PORT, NULL,
                       UDP_SERVER_PORT, NULL);
-  LOG_INFO("Start network\n");
   NETSTACK_MAC.on();
-  LOG_INFO("Network started\n");
   on_network = 0;
-  next_awake_set = 0;
   resetted = 0;
   
   etimer_set(&periodic_timer, random_rand() % SEND_INTERVAL);
@@ -303,15 +302,16 @@ PROCESS_THREAD(node_process, ev, data)
 	  rtcc_date_increment_seconds(simple_td, offset);
 	  pm_set_timeout(0x00);
 	  rtcc_set_alarm_time_date(simple_td, RTCC_ALARM_ON, RTCC_REPEAT_DAY,
-				   RTCC_TRIGGER_INT2);
-	  
+				   RTCC_TRIGGER_INT2);	  
 	}
       }
       if(pm_shutdown_now(PM_HARD_SLEEP_CONFIG) == PM_SUCCESS) {
 	printf("PM: good night!\n");
       } else {
 	printf("PM: error shutting down the system!\n");
+	TEST_LEDS_FAIL
       }
+      etimer_set(&periodic_timer, CLOCK_SECOND * 2);
     }
     if(data == &sending_led_timer){
       if(red){
@@ -325,70 +325,133 @@ PROCESS_THREAD(node_process, ev, data)
       etimer_reset(&sending_led_timer);
     }
     if(data == &periodic_timer){
-      LOG_INFO("Periodic timer\n");
-      if(NETSTACK_ROUTING.node_is_reachable() && NETSTACK_ROUTING.get_root_ipaddr(&dest_ipaddr)) {
+      if(NETSTACK_ROUTING.node_is_reachable() &&
+	 NETSTACK_ROUTING.get_root_ipaddr(&dest_ipaddr)) {
 	if(!on_network){
-	  network_uptime = tsch_get_network_uptime_ticks();
-	  offset = 0;
-	  etimer_set(&shutdown_timer, NETWORKING_DURATION);
-	  LOG_INFO("Networking during %d sec\n",NETWORKING_DURATION/CLOCK_SECOND);
-	  etimer_set(&sending_led_timer, CLOCK_SECOND);
-	  leds_off(LEDS_ALL);
-	  etimer_stop(&init_led_timer);
-	  on_network = 1;
-	}
-	
-	if (clear_to_send) {
-	  if (!resetted){
-	    raz_step();    
-	    resetted = 1;
-	  }	  
-	  
-	  /** Build the data packet from sensor data file  **/
-	  
-	  fdata = cfs_open("root/data", CFS_READ);
-	  ltdata_t data;
-	  memset(&data, 0, sizeof(ltdata_t));
-	  cfs_read(fdata, &data, sizeof(ltdata_t));
-	  cfs_close(fdata);
-
-	  /** Send the datapacket **/
-	  
-	  simple_udp_sendto(&client_conn, &data, sizeof(ltdata_t), &dest_ipaddr);
-	  LOG_INFO("Sent network uptime timestamp %lu and voltage  %u to ", (unsigned long)network_uptime, voltage);
-	  LOG_INFO_6ADDR(&dest_ipaddr);
-	  LOG_INFO_("\n");
-	  
-	}
-	
-	/* First network access : store the time
-	   and the firsts sensors data */
-	
-	if (first_step() && !resetted){
 	  
 	  /** Synchronization : all nodes boot at any time **/
 	  /** save to the universal network time from TSCH  **/
 	  /** All nodes will wake up at same absolute time **/
 	  
-	  
+	  network_uptime = tsch_get_network_uptime_ticks();
+	  offset = 0;
 	  rtcc_sec_to_date(simple_td, network_uptime/CLOCK_SECOND);
 	  
-	  
 	  // example with the next round five minutes
+	  // since the start of the network
 	  // i.e. one of :
 	  // 00, 05, 10, 15, ... 55
+	  // At least after the time for network coverage
+	  // i.e. : DEEP_MAX * JOIN_DURATION
+
+	  int minutes_nc = (DEEP_MAX * JOIN_DURATION) / 60;
+
+	  if(minutes_nc < 2)
+	    minutes_nc = 2;
+	  else if (minutes_nc < 5)
+	    minutes_nc = 5;
+	  else if (minutes_nc < 10)
+	    minutes_nc = 10;
+	  else if (minutes_nc < 15)
+	    minutes_nc = 15;
+	  else
+	    minutes_nc = 20;
 	  
-	  uint8_t ttw = simple_td->minutes % 2;
-	  uint8_t sectw = simple_td->seconds % 60;
+	  uint8_t minutes_to_wait = simple_td->minutes % minutes_nc;
+	  uint8_t seconds_to_wait = simple_td->seconds % 60;
 	  
-	  offset = ((1 - ttw) * 60) + (60 - sectw);
+	  offset = ((minutes_nc - 1 - minutes_to_wait) * 60) + (60 - seconds_to_wait);
 	  
-	  init_data(network_uptime, offset);
-	  record_data();	  
-	  inc_step();
-	  LOG_INFO("Init data offset %d\n", offset);
+	  etimer_set(&shutdown_timer, NETWORKING_DURATION);
+	  LOG_INFO("Networking during %d sec\n",NETWORKING_DURATION/CLOCK_SECOND);
+	  etimer_set(&sending_led_timer, CLOCK_SECOND);
+	  leds_off(LEDS_ALL);
+	  etimer_stop(&init_led_timer);
 	  
+	  if(first_step()){
+	    init_data(network_uptime, offset);
+	    record_stats_data();
+	    inc_step();
+	  }
+	  
+	  record_sensor_data();
+	  
+	  on_network = 1;
+	}	
+
+	update_stats_data(); // update network stats
+	
+	if (clear_to_send) {
+	  if (!resetted){
+	    raz_step();    // by the way, we are at the first step
+	    resetted = 1;  // but after the next boot
+	  }
+	  
+	  
+	  /** Build the data packets from sensor data file  **/
+	  /** each packet has one sensor data **/
+	  /** with time related header and sequence number **/
+	  
+	  
+	  char data[100];
+	  uint16_t sent_pkts = 0;
+	  uint64_t n_time = 0;
+	  uint32_t n_ofst = 0;
+	  int fdata = cfs_open("root/data", CFS_READ);	  
+	  cfs_read(fdata, &n_time, sizeof(uint64_t));
+	  cfs_read(fdata, &n_ofst, sizeof(uint32_t));
+	  while(sent_pkts < tot_steps){
+	    memset(&data, 0, 100);
+	    data[0] = 'D';
+	    memcpy(&data[1], &n_time, sizeof(uint64_t));
+	    memcpy(&data[1 + sizeof(uint64_t)], &n_ofst, sizeof(uint32_t));
+	    memcpy(&data[1 + sizeof(uint64_t) + sizeof(uint32_t)], &sent_pkts, sizeof(uint16_t));
+	    cfs_read(fdata,
+		     &data[1 + sizeof(uint64_t) +
+			   sizeof(uint32_t) + sizeof(uint16_t)],
+		     sizeof(ltdata_t));
+	    
+	  
+	    for(int i = 0; i < sizeof(uint64_t) + sizeof(uint32_t) + sizeof(uint16_t) + sizeof(ltdata_t);i++)
+	      printf("%d ", data[i]);
+	    printf("\n");
+	  
+	    /** Send one data packet **/
+	  
+	    simple_udp_sendto(&client_conn,
+			      &data,
+			      1 + sizeof(uint64_t) + sizeof(uint32_t) + sizeof(uint16_t) + sizeof(ltdata_t) ,
+			      &dest_ipaddr);
+	    LOG_INFO("Sent packet %u timestamp %llu offset %lu to : ", sent_pkts, n_time, n_ofst);
+	    LOG_INFO_6ADDR(&dest_ipaddr);
+	    LOG_INFO_("\n");
+	    
+	    sent_pkts++;
+	  }
+	  cfs_close(fdata);
+	  
+#if defined(UIP_STATS) || defined(RPL_STATS)
+	  int fstats = cfs_open("root/stats", CFS_READ);
+	  char stats[100];
+	  memset(&stats, 0, 100);
+	  stats[0] = 'S';
+	  memcpy(&stats[1], &n_time, sizeof(uint64_t));
+	  memcpy(&stats[1 + sizeof(uint64_t)], &n_ofst, sizeof(uint32_t));
+	  cfs_read(fstats, &stats[1 + sizeof(uint64_t) + sizeof(uint32_t)],sizeof(ltstatsdata_t));
+	  
+	    /** Send the stats packet **/
+	  
+	    simple_udp_sendto(&client_conn,
+			      &stats,
+			      1 + sizeof(uint64_t) + sizeof(uint32_t) + sizeof(ltstatsdata_t),
+			      &dest_ipaddr);
+	    LOG_INFO("Sent stats packet timestamp %llu", n_time);
+	    LOG_INFO_6ADDR(&dest_ipaddr);
+	    LOG_INFO_("\n");
+	    cfs_close(fstats);
+#endif	  
 	}
+	
       } else {
 	LOG_INFO("Not reachable yet\n");
       }
