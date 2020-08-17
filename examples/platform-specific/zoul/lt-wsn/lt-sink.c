@@ -124,19 +124,19 @@ DIS in: %d, ACKDAO out: %d, ACKDAO in: %d\n",
 	data += sizeof(ltdatarcv_t);
 	index += sizeof(ltdatarcv_t);
 	
-	LOG_INFO("%lu V\n", ltdata.voltage);
+	LOG_INFO("%lu.%lu V\n", ltdata.voltage / 100, ltdata.voltage % 100);
 	if(ltdata.sensors[SENSOR_TYPE] == BMP180)
 	  LOG_INFO("Tmp: %d, P: %d\n",
 		   ltdata.sensors[DATA_1],
 		   ltdata.sensors[DATA_2]);
 	if(ltdata.sensors[SENSOR_TYPE] == SHT25)
-	    LOG_INFO("Tmp: %d, H: %d\n",
-		     ltdata.sensors[DATA_1],
-		     ltdata.sensors[DATA_2]);
+	    LOG_INFO("Tmp: %d.%d, H: %d.%d\n",
+		     ltdata.sensors[DATA_1] / 100, ltdata.sensors[DATA_1] % 100,
+		     ltdata.sensors[DATA_2] / 100, ltdata.sensors[DATA_2] % 100);
 	if(ltdata.sensors[SENSOR_TYPE] == DHT22)
-	  LOG_INFO("Tmp: %d, H: %d\n",
-		   ltdata.sensors[DATA_1],
-		   ltdata.sensors[DATA_2]);
+	  LOG_INFO("Tmp: %d.%d, H: %d.%d\n",
+		   ltdata.sensors[DATA_1] / 10, ltdata.sensors[DATA_1] % 10, 
+		   ltdata.sensors[DATA_2] / 10, ltdata.sensors[DATA_2] % 10);
       }
       break;
     }
