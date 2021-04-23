@@ -157,7 +157,7 @@ void shutdown_to_next_step(){
 			   RTCC_TRIGGER_INT2);
   leds_off(LEDS_ALL);
   if(pm_shutdown_now(PM_HARD_SLEEP_CONFIG) == PM_SUCCESS) {
-    printf("PM: good night!\n");
+    printf("PM: good night for %llu\n",some_time );
   } else {
     printf("PM: error shutting down the system!\n");
   }
@@ -217,7 +217,7 @@ PROCESS_THREAD(node_process, ev, data)
 	}
       }
     }
-  }
+  }     // endif first boot
   
   /** Read the current and total steps **/
   
@@ -306,7 +306,7 @@ PROCESS_THREAD(node_process, ev, data)
 	}
       }
       if(pm_shutdown_now(PM_HARD_SLEEP_CONFIG) == PM_SUCCESS) {
-	printf("PM: good night!\n");
+	printf("PM: good night for shutdown %lu\n", offset);
       } else {
 	printf("PM: error shutting down the system!\n");
 	TEST_LEDS_FAIL

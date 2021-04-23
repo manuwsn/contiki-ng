@@ -13,6 +13,9 @@ endif
 ifeq ($(findstring ldr, $(SENSOR)), ldr)
 CFLAGS += -DSENSOR_CONF_LDR
 endif
+ifeq ($(findstring dls, $(SENSOR)), dls)
+CFLAGS += -DSENSOR_CONF_DLS
+endif
 
 ifdef PERIOD
 CFLAGS += -DPERIOD=$(PERIOD)

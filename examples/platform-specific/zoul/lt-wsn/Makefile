@@ -2,7 +2,7 @@ CONTIKI_PROJECT = lt-sensor lt-sink rt
 PROJECT_SOURCEFILES += rtcc-tools.c
 PROJECT_SOURCEFILES += lt-data.c lt-data-zoul.c
 
-CONTIKI_TARGET_SOURCEFILES += sht25.c bmpx8x.c dht22.c
+CONTIKI_TARGET_SOURCEFILES += sht25.c bmpx8x.c dht22.c adc-sensors.c tsl256x.c motion-sensor.c
 
 BOARD ?= remote-revb
 
@@ -21,6 +21,7 @@ MAKE_MAC = MAKE_MAC_TSCH
 
 include Makefile.sensors
 include $(CONTIKI)/Makefile.dir-variables
+
 MODULES += $(CONTIKI_NG_SERVICES_DIR)/shell
 
 

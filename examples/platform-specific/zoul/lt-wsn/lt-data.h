@@ -22,6 +22,12 @@ typedef struct  {
 #ifdef SENSOR_DHT22
   uint16_t sensors[3];
 #endif
+#ifdef SENSOR_LDR
+  uint16_t sensors[2];
+#endif
+#ifdef SENSOR_DLS
+  uint16_t sensors[2];
+#endif
   
 } ltdata_t;
 

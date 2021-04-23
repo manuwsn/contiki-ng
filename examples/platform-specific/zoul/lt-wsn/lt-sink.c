@@ -20,6 +20,8 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include "lib/memb.h"
+
 
 #include "lt-data.h"
 
@@ -62,14 +64,16 @@ udp_rx_callback(struct simple_udp_connection *c,
          const uint8_t *data,
          uint16_t datalen)
 {
-  
-  LOG_INFO("Received packet of %d bytes\n",datalen);
-  int index = 0;
+  //LOG_INFO("Received packet of %d bytes\n",datalen);
+  LOG_INFO_6ADDR(sender_addr);
   for(int i = 0; i < datalen;i++)
-    printf("%d ", data[i]);
+    printf(" %d", data[i]);
   printf("\n");
 
+  
+  /*
   if(datalen >= sizeof(ltdata_t)) {
+  int index = 0;
     char d_type;
     uint64_t time = 0;
     d_type = data[0];
@@ -141,6 +145,7 @@ DIS in: %d, ACKDAO out: %d, ACKDAO in: %d\n",
       break;
     }
   }
+  */
 }
 /*---------------------------------------------------------------------------*/
 PROCESS_THREAD(node_process, ev, data)

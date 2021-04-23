@@ -7,6 +7,7 @@
 #define SHT25 1
 #define DHT22 2
 #define LDR 3
+#define DLS 4
 
 #ifdef SENSOR_BMP180
 enum {
@@ -25,6 +26,16 @@ enum {
   SENSOR_TYPE,
   TEMPERATURE_SENSOR,
   HUMIDITY_SENSOR,
+};
+#elif SENSOR_LDR
+enum {
+  SENSOR_TYPE,
+  LIGHT_SENSOR,
+};
+#elif SENSOR_DLS
+enum {
+  SENSOR_TYPE,
+  LIGHT_SENSOR,
 };
 #else
 enum{
