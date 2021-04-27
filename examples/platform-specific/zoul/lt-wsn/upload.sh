@@ -22,6 +22,9 @@ case $1 in
     dls)
 	make SENSOR=dls POWERMGMT=1 UIPSTATS=1 RPLSTATS=1 lt-sensor.upload
 	;;
+    sink)
+	make  POWERMGMT=1 UIPSTATS=1 RPLSTATS=1 lt-sink.upload
+	;;
     *)
 	echo not understant $1
 	;;
