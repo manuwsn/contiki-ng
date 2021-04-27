@@ -147,8 +147,11 @@ PROCESS_THREAD(node_process, ev, data)
     PROCESS_WAIT_EVENT_UNTIL(ev == PROCESS_EVENT_TIMER);
 
     if (data == &cycle_timer){
-      if (!boot)
+      if (!boot){
+	// timer de relevée des données
+	// recevoir udp et afficher
 	receive_data();
+      }
       else
 	boot = 0;
       
