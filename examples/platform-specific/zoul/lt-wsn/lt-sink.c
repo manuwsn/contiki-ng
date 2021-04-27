@@ -4,6 +4,8 @@
 #include "net/netstack.h"
 #include "net/ipv6/simple-udp.h"
 #include "net/mac/tsch/tsch.h"
+#include "net/ipv6/multicast/uip-mcast6.h"
+#include "net/ipv6/uip-udp-packet.h"
 #include "lib/random.h"
 #include "sys/node-id.h"
 
@@ -33,6 +35,10 @@
 
 #define SEND_INTERVAL		  (5 * CLOCK_SECOND)
 
+#if !NETSTACK_CONF_WITH_IPV6 || !UIP_CONF_ROUTER || !UIP_IPV6_MULTICAST || !UIP_CONF_IPV6_RPL
+#error "This example can not work with the current contiki configuration"
+#error "Check the values of: NETSTACK_CONF_WITH_IPV6, UIP_CONF_ROUTER, UIP_CONF_IPV6_RPL"
+#endif
 
 /*---------------------------------------------------------------------------*/
 //static struct etimer et;
@@ -50,10 +56,50 @@
 //static simple_td_map *simple_td = (simple_td_map *)rtc_buffer;
 //static uint64_t date_seconds = DATE_SECONDS;
 /*---------------------------------------------------------------------------*/
-static struct simple_udp_connection client_conn, server_conn;
+static struct simple_udp_connection server_conn;
 
 PROCESS(node_process, "RPL Node");
 AUTOSTART_PROCESSES(&node_process);
+/*---------------------------------------------------------------------------*/
+
+#define MAX_PAYLOAD_LEN 12
+#define MCAST_SINK_UDP_PORT 3001 /* Host byte order */
+static struct uip_udp_conn * mcast_conn;
+static char buf[MAX_PAYLOAD_LEN];
+
+static uint64_t time_to_sleep;
+static uint32_t sleep_frequency = SLEEP_FREQUENCY;
+
+static void
+multicast_send(void)
+{
+  memset(buf, 0, MAX_PAYLOAD_LEN);
+  memcpy(buf, &time_to_sleep, sizeof(uint64_t));
+  memcpy(&buf[sizeof(uint64_t)], &sleep_frequency, sizeof(uint32_t));
+  uip_udp_packet_send(mcast_conn, buf, sizeof(uint64_t) + sizeof(uint32_t));
+}
+/*---------------------------------------------------------------------------*/
+static void
+prepare_mcast(void)
+{
+  uip_ipaddr_t ipaddr;
+
+#if UIP_MCAST6_CONF_ENGINE == UIP_MCAST6_ENGINE_MPL
+/*
+ * MPL defines a well-known MPL domain, MPL_ALL_FORWARDERS, which
+ *  MPL nodes are automatically members of. Send to that domain.
+ */
+  uip_ip6addr(&ipaddr, 0xFF03,0,0,0,0,0,0,0xFC);
+#else
+  /*
+   * IPHC will use stateless multicast compression for this destination
+   * (M=1, DAC=0), with 32 inline bits (1E 89 AB CD)
+   */
+  uip_ip6addr(&ipaddr, 0xFF1E,0,0,0,0,0,0x89,0xABCD);
+#endif
+  mcast_conn = udp_new(&ipaddr, UIP_HTONS(MCAST_SINK_UDP_PORT), NULL);
+}
+
 /*---------------------------------------------------------------------------*/
 static void
 udp_rx_callback(struct simple_udp_connection *c,
@@ -70,109 +116,54 @@ udp_rx_callback(struct simple_udp_connection *c,
     printf(" %d", data[i]);
   printf("\n");
 
-  
-  /*
-  if(datalen >= sizeof(ltdata_t)) {
-  int index = 0;
-    char d_type;
-    uint64_t time = 0;
-    d_type = data[0];
-    data++;
-    index++;
-    memcpy(&time, data, sizeof(uint64_t));
-    data += sizeof(uint64_t);
-    index +=  sizeof(uint64_t);
-    uint32_t offset = 0;
-    memcpy(&offset, data, sizeof(uint32_t));
-    data +=  sizeof(uint32_t);
-    index +=  sizeof(uint32_t);
-    LOG_INFO("Received from ");
-    LOG_INFO_6ADDR(sender_addr);
-    LOG_INFO("\n");
-    LOG_INFO("Packet type: %c , time: %llu, offset: %lu\n", d_type, time, offset);
-
-#if defined(UIP_STATS) || defined(RPL_STATS)
-      ltstatsdata_t ltstatsdata;
-#endif
-
-    switch(d_type){
-    case 'S':
-#if defined(UIP_STATS) || defined(RPL_STATS)
-      //ltstatsdata_t ltstatsdata;
-      memcpy(&ltstatsdata, data, sizeof(ltstatsdata_t));
-#ifdef UIP_STATS
-      LOG_INFO("IP out: %d, IP in: %d, IP fwd: %d, IP drop: %d\n",
-	       ltstatsdata.uip_stats[SEND_IP],ltstatsdata.uip_stats[RCV_IP],
-	       ltstatsdata.uip_stats[FWD_IP],ltstatsdata.uip_stats[DROP_IP]);
-#endif
-#ifdef RPL_STATS
-      LOG_INFO("DIO out: %d, DIO in: %d, DAO out: %d, DAO in: %d, DIS out: %d, \
-DIS in: %d, ACKDAO out: %d, ACKDAO in: %d\n",
-	       ltstatsdata.rpl_stats[SEND_DIO],  ltstatsdata.rpl_stats[RCV_DIO], 
-	       ltstatsdata.rpl_stats[SEND_DAO],  ltstatsdata.rpl_stats[RCV_DAO],
-	       ltstatsdata.rpl_stats[SEND_DIS],  ltstatsdata.rpl_stats[RCV_DIS], 
-	       ltstatsdata.rpl_stats[SEND_ACKDAO],  ltstatsdata.rpl_stats[RCV_ACKDAO]);
-#endif
-      data += sizeof(ltstatsdata_t);
-      index += sizeof(ltstatsdata_t);
-#endif
-      break;
-    case 'D':
-      while(index < datalen){
-	uint16_t num_rec = 0;
-	memcpy(&num_rec, data, sizeof(uint16_t));
-	data += sizeof(uint16_t);
-	index += sizeof(uint16_t);
-	ltdatarcv_t ltdata;
-	memcpy(&ltdata, data, sizeof(ltdatarcv_t));
-	data += sizeof(ltdatarcv_t);
-	index += sizeof(ltdatarcv_t);
-	
-	LOG_INFO("%lu.%lu V\n", ltdata.voltage / 100, ltdata.voltage % 100);
-	if(ltdata.sensors[SENSOR_TYPE] == BMP180)
-	  LOG_INFO("Tmp: %d, P: %d\n",
-		   ltdata.sensors[DATA_1],
-		   ltdata.sensors[DATA_2]);
-	if(ltdata.sensors[SENSOR_TYPE] == SHT25)
-	    LOG_INFO("Tmp: %d.%d, H: %d.%d\n",
-		     ltdata.sensors[DATA_1] / 100, ltdata.sensors[DATA_1] % 100,
-		     ltdata.sensors[DATA_2] / 100, ltdata.sensors[DATA_2] % 100);
-	if(ltdata.sensors[SENSOR_TYPE] == DHT22)
-	  LOG_INFO("Tmp: %d.%d, H: %d.%d\n",
-		   ltdata.sensors[DATA_1] / 10, ltdata.sensors[DATA_1] % 10, 
-		   ltdata.sensors[DATA_2] / 10, ltdata.sensors[DATA_2] % 10);
-      }
-      break;
-    }
-  }
-  */
+}
+/*---------------------------------------------------------------------------*/
+static void
+receive_data(){
+  simple_udp_register(&server_conn, UDP_SERVER_PORT, NULL,
+                      UDP_CLIENT_PORT, udp_rx_callback);
 }
 /*---------------------------------------------------------------------------*/
 PROCESS_THREAD(node_process, ev, data)
 {
-  static struct etimer periodic_timer;
+  static struct etimer send_periodic_timer;
+  static struct etimer cycle_timer;
+  static int boot = 1;
   
 
   PROCESS_BEGIN();
   
   
     NETSTACK_ROUTING.root_start();
-
-  /* Initialize UDP connections */
-  simple_udp_register(&server_conn, UDP_SERVER_PORT, NULL,
-                      UDP_CLIENT_PORT, udp_rx_callback);
-  simple_udp_register(&client_conn, UDP_CLIENT_PORT, NULL,
-                      UDP_SERVER_PORT, NULL);
+    prepare_mcast();
 
 
-  
   NETSTACK_MAC.on();
-
-  etimer_set(&periodic_timer, random_rand() % SEND_INTERVAL);
+  
+  etimer_set(&cycle_timer, CLOCK_SECOND);
+  etimer_set(&send_periodic_timer, random_rand() % SEND_INTERVAL);
 
   while(1) {
-    PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&periodic_timer));
+    PROCESS_WAIT_EVENT_UNTIL(ev == PROCESS_EVENT_TIMER);
+
+    if (data == &cycle_timer){
+      if (!boot)
+	receive_data();
+      else
+	boot = 0;
+      
+      time_to_sleep = tsch_get_network_uptime_ticks() + (CYCLE_DURATION * CLOCK_SECOND);
+      etimer_set(&cycle_timer, CYCLE_DURATION * CLOCK_SECOND);
+      etimer_set(&send_periodic_timer, random_rand() % SEND_INTERVAL);
+      
+      
+    }
+    if (data == &send_periodic_timer){
+	multicast_send();
+	etimer_set(&send_periodic_timer, random_rand() % SEND_INTERVAL);
+    }
   }
+
 
   PROCESS_END();
 }
