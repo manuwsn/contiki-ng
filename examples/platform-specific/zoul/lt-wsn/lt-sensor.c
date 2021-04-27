@@ -82,17 +82,16 @@ PROCESS(node_process, "RPL Node");
 AUTOSTART_PROCESSES(&node_process);
 /*---------------------------------------------------------------------------*/
 
+static uint64_t time_to_sleep;
+static uint32_t sleep_frequency;
+
 static void
 tcpip_handler(void)
 {
   if(uip_newdata()) {
-    uint64_t time_to_sleep;
-    uint32_t frequency;
 
     memcpy(&time_to_sleep, (uint8_t*)uip_appdata, sizeof(uint64_t));
-    memcpy(&frequency,  &((uint8_t*)uip_appdata)[sizeof(uint64_t)], sizeof(uint32_t));
-    LOG_INFO("rdv\n");
-    // TODO paramétrer l'heure de réveil
+    memcpy(&sleep_frequency,  &((uint8_t*)uip_appdata)[sizeof(uint64_t)], sizeof(uint32_t));
     rendezvous = 1;
   }
   return;
@@ -219,7 +218,7 @@ PROCESS_THREAD(node_process, ev, data)
   static int fconf;
   //static struct cfs_dir dirp;
   //static struct cfs_dirent dirent;
-  static int sleep_frequency = SLEEP_FREQUENCY;
+  //static int sleep_frequency = SLEEP_FREQUENCY;
   
   PROCESS_BEGIN();
   LOG_INFO("START\n");
@@ -227,9 +226,10 @@ PROCESS_THREAD(node_process, ev, data)
   
   fconf = cfs_open("conf", CFS_READ);
   
-  /** first boot after flashing or too much reboot **/
   
-  if (fconf < 0) { 
+  if (fconf < 0) {
+    
+  /** first boot after flashing or too much reboot **/
 
     LOG_INFO("First boot\n");
     btn = button_hal_get_by_index(0);
@@ -258,32 +258,36 @@ PROCESS_THREAD(node_process, ev, data)
     }
   }
 
-  // conf file exist, test if it is
-  // a reboot for waiting mcst
+  // conf file exist
+  // read the current conf
   
   fconf = cfs_open("conf", CFS_READ);
   uint8_t buf[2];
   cfs_read(fconf, buf, 2 * sizeof(uint8_t));
   cfs_close(fconf);
-  if (buf[0] == 0){  // Always waiting for mcst
-    if (buf[1] < MAX_ATTEMPT_MCST){  // try again
-      buf[1]++;                      // increments tentative
+
+  
+  if (buf[0] == 0){
+
+     // Always waiting for mcst
+    
+    if (buf[1] < MAX_ATTEMPT_MCST){      // try again
+      buf[1]++;                          // increments tentative
       fconf = cfs_open("conf", CFS_WRITE);
       cfs_write(fconf, buf, 2 * sizeof(uint8_t));
       cfs_write(fconf, &CFS_EOF, 1);
       cfs_close(fconf);
     }
-    else { // too much tries, full RAZ and shutdwown
+    else {             // too much tries, remove conf and shutdwown
       cfs_remove("conf");
       if(pm_shutdown_now(PM_HARD_SLEEP_CONFIG) == PM_SUCCESS) {
 	printf("PM: good night for %d\n",RETRY_MCST_TIME );
       } else{
 	TEST_LEDS_FAIL;}
     }
-  }
-   
+
+    // Multicast communication try 
   
- 
     etimer_set(&waiting_mcst, WAIT_MCST_TIME * CLOCK_SECOND);
     
     sink_conn = udp_new(NULL, UIP_HTONS(0), NULL);
@@ -299,7 +303,7 @@ PROCESS_THREAD(node_process, ev, data)
 	tcpip_handler();
       if (ev == PROCESS_EVENT_TIMER){
 	if (data == &init_led_timer){
-	  if (blue){
+	  if (blue){              // blue led blinking
 	    leds_off(LEDS_ALL);
 	    blue=0;
 	  }
@@ -311,9 +315,6 @@ PROCESS_THREAD(node_process, ev, data)
 	}
 	if (data == &waiting_mcst){
 	  uint64_t retry = RETRY_MCST_TIME;
-	  LOG_INFO("retry multicast later\n");
-
-	  
 	  rtcc_sec_to_date(simple_td, 0);
 	  rtcc_set_time_date(simple_td);
 	  rtcc_date_increment_seconds(simple_td, retry);
@@ -332,7 +333,59 @@ PROCESS_THREAD(node_process, ev, data)
 	  
     }
 
-    /* enregistrement fichier de conf */
+    // Writing conf file with received parameters
+
+    cfs_remove("conf");
+    uint8_t buf[13];
+    buf[0] = 1;  // conf ok
+    memcpy(&buf[1], &time_to_sleep, sizeof(uint64_t));
+    memcpy(&buf[sizeof(uint64_t) + sizeof(uint8_t)], &sleep_frequency, sizeof(uint32_t));
+    fconf = cfs_open("conf", CFS_WRITE);
+    cfs_write(fconf, buf, 13 * sizeof(uint8_t));
+    cfs_write(fconf, &CFS_EOF, 1);
+    cfs_close(fconf);
+
+    // Program the first awake time
+    
+    uint64_t fat = tsch_get_network_uptime_ticks() +
+      (time_to_sleep - tsch_get_network_uptime_ticks())/ sleep_frequency;
+    
+    rtcc_sec_to_date(simple_td, 0);
+    rtcc_set_time_date(simple_td);
+    rtcc_date_increment_seconds(simple_td, fat);
+    pm_set_timeout(0x00);
+    rtcc_set_alarm_time_date(simple_td, RTCC_ALARM_ON, RTCC_REPEAT_DAY,
+			     RTCC_TRIGGER_INT2);
+
+    // Adjust the sleep_frequency for next step
+    // by rewriting conf file
+
+    sleep_frequency--;   // the next time there will be one less sleep
+    
+    cfs_remove("conf");
+    memcpy(&buf[sizeof(uint64_t) + sizeof(uint8_t)], &sleep_frequency, sizeof(uint32_t));
+    fconf = cfs_open("conf", CFS_WRITE);
+    cfs_write(fconf, buf, 13 * sizeof(uint8_t));
+    cfs_write(fconf, &CFS_EOF, 1);
+    cfs_close(fconf);
+
+    // Sense data and write on data file
+    // wait a bit for network
+  }
+  else { // There is a conf file
+    // if sleep_frequency != 1
+    // sense data, compute next awake
+    // update conf file
+    // and shutdown
+    //
+    // if sleep_frequency == 1
+    // sense data
+    // send data or backup it
+    // send backup if any
+    // remove data file
+    // rewrite conf file to 0 0
+    // networking a bit
+    // shutdown
   
     
       /* Initialize UDP connections */
@@ -340,9 +393,7 @@ PROCESS_THREAD(node_process, ev, data)
       simple_udp_register(&client_conn, UDP_CLIENT_PORT, NULL,
 			  UDP_SERVER_PORT, NULL);
       */
-  
-    // save parameter in /root/run
-    
+    /*
     fconf = cfs_open("root/run", CFS_WRITE|CFS_APPEND);
     cfs_coffee_set_io_semantics(fconf, CFS_COFFEE_IO_ENSURE_READ_LENGTH);
     char sfrq[4];  
@@ -356,7 +407,8 @@ PROCESS_THREAD(node_process, ev, data)
     cfs_write(fconf, &CFS_EOF, 1);
     cfs_close(fconf);
 
-  
+    */
+    
   /** Read the current and total steps **/
   
   char conf[4];
