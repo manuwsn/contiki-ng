@@ -23,6 +23,7 @@ include Makefile.sensors
 include $(CONTIKI)/Makefile.dir-variables
 
 MODULES += $(CONTIKI_NG_SERVICES_DIR)/shell
+MODULES += os/net/ipv6/multicast
 
 
 include $(CONTIKI)/Makefile.include

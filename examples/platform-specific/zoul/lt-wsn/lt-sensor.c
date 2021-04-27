@@ -5,6 +5,7 @@
 #include "net/netstack.h"
 #include "net/ipv6/simple-udp.h"
 #include "net/mac/tsch/tsch.h"
+#include "net/ipv6/multicast/uip-mcast6.h"
 #include "lib/random.h"
 #include "storage/cfs/cfs.h"
 #include "storage/cfs/cfs-coffee.h"
@@ -36,6 +37,11 @@
 #define SEND_INTERVAL		  (5 * CLOCK_SECOND)
 
 
+#if !NETSTACK_CONF_WITH_IPV6 || !UIP_CONF_ROUTER || !UIP_IPV6_MULTICAST || !UIP_CONF_IPV6_RPL
+#error "This example can not work with the current contiki configuration"
+#error "Check the values of: NETSTACK_CONF_WITH_IPV6, UIP_CONF_ROUTER, UIP_CONF_IPV6_RPL"
+#endif
+
 /*---------------------------------------------------------------------------*/
 static struct etimer shutdown_timer,
   init_led_timer, sending_led_timer;
@@ -48,6 +54,11 @@ static struct etimer shutdown_timer,
                                           PROCESS_EXIT();
 /*---------------------------------------------------------------------------*/
 #define TEST_ALARM_SECOND                 3600
+
+#define NETWORKING_DURATION (DEEP_MAX * JOIN_DURATION * CLOCK_SECOND)
+
+#define SLEEP_DURATION (CYCLE_DURATION / SLEEP_FREQUENCY)
+
 /*---------------------------------------------------------------------------*/
 static uint8_t rtc_buffer[sizeof(simple_td_map)];
 static simple_td_map *simple_td = (simple_td_map *)rtc_buffer;
@@ -55,15 +66,47 @@ static simple_td_map *simple_td = (simple_td_map *)rtc_buffer;
 static uint64_t network_uptime;
 static uint32_t offset;
 
+static uint8_t rendezvous;
+
 static int tot_steps, cur_step, clear_to_send, on_network, resetted;
 
 static char CFS_EOF = (char) -1;
 /*---------------------------------------------------------------------------*/
 static struct simple_udp_connection client_conn;
 
+#define MCAST_SINK_UDP_PORT 3001 /* Host byte order */
+
+static struct uip_udp_conn *sink_conn;
+
 PROCESS(node_process, "RPL Node");
 AUTOSTART_PROCESSES(&node_process);
 /*---------------------------------------------------------------------------*/
+
+static void
+tcpip_handler(void)
+{
+  if(uip_newdata()) {
+    uint64_t time_to_sleep;
+    uint32_t frequency;
+
+    memcpy(&time_to_sleep, (uint8_t*)uip_appdata, sizeof(uint64_t));
+    memcpy(&frequency,  &((uint8_t*)uip_appdata)[sizeof(uint64_t)], sizeof(uint32_t));
+    LOG_INFO("rdv\n");
+    // TODO paramétrer l'heure de réveil
+    rendezvous = 1;
+  }
+  return;
+}
+
+static void
+time_param_cb(struct simple_udp_connection *c,
+         const uip_ipaddr_t *sender_addr,
+         uint16_t sender_port,
+         const uip_ipaddr_t *receiver_addr,
+         uint16_t receiver_port,
+         const uint8_t *data,
+         uint16_t datalen)
+{}
 
 int first_step(){
   return cur_step == 1;
@@ -171,23 +214,23 @@ PROCESS_THREAD(node_process, ev, data)
   button_hal_button_t *btn;
   static uint8_t initialized, blue,red;
   static struct etimer periodic_timer;
+  static struct etimer waiting_mcst;
   uip_ipaddr_t dest_ipaddr;
-  static struct cfs_dir dirp;
-  static struct cfs_dirent dirent;
+  static int fconf;
+  //static struct cfs_dir dirp;
+  //static struct cfs_dirent dirent;
   static int sleep_frequency = SLEEP_FREQUENCY;
   
   PROCESS_BEGIN();
   LOG_INFO("START\n");
-  /* Test the presence of the DATAFILE file
-     If not present that is the first boot and 
-     waits button pressed few seconds */
-
-  int fconf = cfs_opendir(&dirp,"root");
-  fconf = cfs_readdir(&dirp, &dirent);
-
-  /** First Boot and never seen a network **/
+  pm_enable();
   
-  if (fconf < 0) {    // First boot
+  fconf = cfs_open("conf", CFS_READ);
+  
+  /** first boot after flashing or too much reboot **/
+  
+  if (fconf < 0) { 
+
     LOG_INFO("First boot\n");
     btn = button_hal_get_by_index(0);
     initialized = 0;
@@ -200,24 +243,119 @@ PROCESS_THREAD(node_process, ev, data)
 	  blue=1;
 	  initialized = 1;
 	  etimer_set(&init_led_timer, CLOCK_SECOND);
-	  //cfs_coffee_format();
 	  leds_on(LEDS_BLUE);
-	  fconf = cfs_open("root/run", CFS_WRITE|CFS_APPEND);
-	  cfs_coffee_set_io_semantics(fconf, CFS_COFFEE_IO_ENSURE_READ_LENGTH);
-	  char sfrq[4];  
-	  memset(sfrq, 0, 4);
-	  memcpy(sfrq,&sleep_frequency,4);  // total step
-	  cfs_write(fconf, sfrq,4);
-	  memset(sfrq, 0, 4);
-	  int first = 1;
-	  memcpy(sfrq,&first,4);
-	  cfs_write(fconf, sfrq,4);
+	  
+	  fconf = cfs_open("conf", CFS_WRITE);
+	  uint8_t buf[2];
+	  buf[0] = 0;
+	  buf[1] = 0;
+	  memset(buf, 0, 2 * sizeof(uint8_t));
+	  cfs_write(fconf, buf, 2 * sizeof(uint8_t));
 	  cfs_write(fconf, &CFS_EOF, 1);
 	  cfs_close(fconf);
 	}
       }
     }
-  }     // endif first boot
+  }
+
+  // conf file exist, test if it is
+  // a reboot for waiting mcst
+  
+  fconf = cfs_open("conf", CFS_READ);
+  uint8_t buf[2];
+  cfs_read(fconf, buf, 2 * sizeof(uint8_t));
+  cfs_close(fconf);
+  if (buf[0] == 0){  // Always waiting for mcst
+    if (buf[1] < MAX_ATTEMPT_MCST){  // try again
+      buf[1]++;                      // increments tentative
+      fconf = cfs_open("conf", CFS_WRITE);
+      cfs_write(fconf, buf, 2 * sizeof(uint8_t));
+      cfs_write(fconf, &CFS_EOF, 1);
+      cfs_close(fconf);
+    }
+    else { // too much tries, full RAZ and shutdwown
+      cfs_remove("conf");
+      if(pm_shutdown_now(PM_HARD_SLEEP_CONFIG) == PM_SUCCESS) {
+	printf("PM: good night for %d\n",RETRY_MCST_TIME );
+      } else{
+	TEST_LEDS_FAIL;}
+    }
+  }
+   
+  
+ 
+    etimer_set(&waiting_mcst, WAIT_MCST_TIME * CLOCK_SECOND);
+    
+    sink_conn = udp_new(NULL, UIP_HTONS(0), NULL);
+    udp_bind(sink_conn, UIP_HTONS(MCAST_SINK_UDP_PORT));
+    
+    NETSTACK_MAC.on();
+
+    rendezvous = 0;
+    LOG_INFO("Waiting multicast\n");
+    while(!rendezvous) {
+      PROCESS_WAIT_EVENT_UNTIL(ev == tcpip_event || ev == PROCESS_EVENT_TIMER);
+      if (ev == tcpip_event)
+	tcpip_handler();
+      if (ev == PROCESS_EVENT_TIMER){
+	if (data == &init_led_timer){
+	  if (blue){
+	    leds_off(LEDS_ALL);
+	    blue=0;
+	  }
+	  else {
+	    leds_on(LEDS_BLUE);
+	    blue=1;
+	  }
+	  etimer_reset(&init_led_timer);
+	}
+	if (data == &waiting_mcst){
+	  uint64_t retry = RETRY_MCST_TIME;
+	  LOG_INFO("retry multicast later\n");
+
+	  
+	  rtcc_sec_to_date(simple_td, 0);
+	  rtcc_set_time_date(simple_td);
+	  rtcc_date_increment_seconds(simple_td, retry);
+	  pm_set_timeout(0x00);
+	  rtcc_set_alarm_time_date(simple_td, RTCC_ALARM_ON, RTCC_REPEAT_DAY,
+				   RTCC_TRIGGER_INT2);
+	  leds_off(LEDS_ALL);
+	  if(pm_shutdown_now(PM_HARD_SLEEP_CONFIG) == PM_SUCCESS) {
+	    printf("PM: good night for %d\n",RETRY_MCST_TIME );
+	  } else{
+	    LOG_INFO("mert..%d\n", pm_shutdown_now(PM_HARD_SLEEP_CONFIG));
+	  TEST_LEDS_FAIL;}
+	    
+	}
+      }
+	  
+    }
+
+    /* enregistrement fichier de conf */
+  
+    
+      /* Initialize UDP connections */
+      /*
+      simple_udp_register(&client_conn, UDP_CLIENT_PORT, NULL,
+			  UDP_SERVER_PORT, NULL);
+      */
+  
+    // save parameter in /root/run
+    
+    fconf = cfs_open("root/run", CFS_WRITE|CFS_APPEND);
+    cfs_coffee_set_io_semantics(fconf, CFS_COFFEE_IO_ENSURE_READ_LENGTH);
+    char sfrq[4];  
+    memset(sfrq, 0, 4);
+    memcpy(sfrq,&sleep_frequency,4);  // total step
+    cfs_write(fconf, sfrq,4);
+    memset(sfrq, 0, 4);
+    int first = 1;
+    memcpy(sfrq,&first,4);
+    cfs_write(fconf, sfrq,4);
+    cfs_write(fconf, &CFS_EOF, 1);
+    cfs_close(fconf);
+
   
   /** Read the current and total steps **/
   
@@ -259,7 +397,7 @@ PROCESS_THREAD(node_process, ev, data)
   
   /* Initialize UDP connections */
   simple_udp_register(&client_conn, UDP_CLIENT_PORT, NULL,
-                      UDP_SERVER_PORT, NULL);
+                      UDP_SERVER_PORT, &time_param_cb);
   NETSTACK_MAC.on();
   on_network = 0;
   resetted = 0;

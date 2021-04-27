@@ -15,6 +15,19 @@
 #define COFFEE_CONF_APPEND_ONLY       0
 #define DATAFILE "lt-data"
 
+
+/*******************************************************/
+/******************* Configure Multicast ***************/
+/*******************************************************/
+
+#ifndef UIP_MCAST6_CONF_ENGINE
+#define UIP_MCAST6_CONF_ENGINE UIP_MCAST6_ENGINE_MPL
+#endif
+
+#define UIP_MCAST6_ROUTE_CONF_ROUTES 1
+
+#define LPM_CONF_MAX_PM             1
+
 /*******************************************************/
 /******************* Configure cycles ******************/
 /*******************************************************/
@@ -31,8 +44,6 @@
 #define DEEP_MAX 1
 #endif
 
-#define NETWORKING_DURATION (DEEP_MAX * JOIN_DURATION * CLOCK_SECOND)
-
 
 #ifdef CYCLE_CONF_DURATION
 #define CYCLE_DURATION CYCLE_CONF_DURATION
@@ -46,10 +57,11 @@
 #define SLEEP_FREQUENCY 3
 #endif
 
-#define SLEEP_DURATION (CYCLE_DURATION / SLEEP_FREQUENCY)
-
-
 #define DATE_SECONDS DATE_CONF_SECONDS
+
+#define WAIT_MCST_TIME 10
+#define RETRY_MCST_TIME 11
+#define MAX_ATTEMPT_MCST 3
 
 /*******************************************************/
 /******************* Configure rtcc  *******************/
