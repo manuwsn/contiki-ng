@@ -33,7 +33,7 @@
 #define UDP_CLIENT_PORT	8765
 #define UDP_SERVER_PORT	5678
 
-#define SEND_INTERVAL		  (5 * CLOCK_SECOND)
+#define SEND_INTERVAL		  10
 
 #if !NETSTACK_CONF_WITH_IPV6 || !UIP_CONF_ROUTER || !UIP_IPV6_MULTICAST || !UIP_CONF_IPV6_RPL
 #error "This example can not work with the current contiki configuration"
@@ -62,21 +62,49 @@ PROCESS(node_process, "RPL Node");
 AUTOSTART_PROCESSES(&node_process);
 /*---------------------------------------------------------------------------*/
 
-#define MAX_PAYLOAD_LEN 12
+
+#define MAX_PAYLOAD_LEN 20
 #define MCAST_SINK_UDP_PORT 3001 /* Host byte order */
 static struct uip_udp_conn * mcast_conn;
 static char buf[MAX_PAYLOAD_LEN];
 
-static uint64_t time_to_sleep;
+static uint64_t time_to_send = CYCLE_DURATION;
 static uint32_t sleep_frequency = SLEEP_FREQUENCY;
+static uint64_t starting_date = CURRENT_DATE;
+static uint64_t current_date = CURRENT_DATE;
+
+static uint64_t tsch_time = 0;
+static uint64_t deltaT = 0;
+static uint64_t elapsed_time = 0;
+
+static uint64_t old_tsch_time = 0;
 
 static void
 multicast_send(void)
 {
-  memset(buf, 0, MAX_PAYLOAD_LEN);
-  memcpy(buf, &time_to_sleep, sizeof(uint64_t));
-  memcpy(&buf[sizeof(uint64_t)], &sleep_frequency, sizeof(uint32_t));
-  uip_udp_packet_send(mcast_conn, buf, sizeof(uint64_t) + sizeof(uint32_t));
+  tsch_time = tsch_get_network_uptime_ticks();
+  deltaT = tsch_time - old_tsch_time ;
+  old_tsch_time = tsch_time;
+  
+  current_date += (deltaT/CLOCK_SECOND);
+  elapsed_time = current_date - starting_date;
+  time_to_send = CYCLE_DURATION - (elapsed_time % CYCLE_DURATION);
+  sleep_frequency = time_to_send * SLEEP_FREQUENCY / CYCLE_DURATION;
+
+
+  //if(sleep_frequency > 0) {
+  /*  
+  printf("Send at %llu : %llu %lu\n",
+	     current_date,
+	     time_to_send,
+	     sleep_frequency);
+  */
+    memset(buf, 0, MAX_PAYLOAD_LEN);
+    memcpy(buf, &current_date, sizeof(uint64_t));
+    memcpy(&buf[sizeof(uint64_t)], &time_to_send, sizeof(uint64_t));
+    memcpy(&buf[2 * sizeof(uint64_t)], &sleep_frequency, sizeof(uint32_t));
+    uip_udp_packet_send(mcast_conn, buf, (2 * sizeof(uint64_t)) + sizeof(uint32_t));
+    //}
 }
 /*---------------------------------------------------------------------------*/
 static void
@@ -111,10 +139,17 @@ udp_rx_callback(struct simple_udp_connection *c,
          uint16_t datalen)
 {
   //LOG_INFO("Received packet of %d bytes\n",datalen);
+  printf("%llu ", tsch_get_network_uptime_ticks() / CLOCK_SECOND);
   LOG_INFO_6ADDR(sender_addr);
   for(int i = 0; i < datalen;i++)
     printf(" %d", data[i]);
   printf("\n");
+
+  // when receiving, one can low the multicast sending frequency
+  /*
+  char ack = "K";
+  simple_udp_sendto(&server_conn, &ack,1, &sender_addr);
+  */
 
 }
 /*---------------------------------------------------------------------------*/
@@ -123,50 +158,48 @@ receive_data(){
   simple_udp_register(&server_conn, UDP_SERVER_PORT, NULL,
                       UDP_CLIENT_PORT, udp_rx_callback);
 }
+
+static uint8_t tsch_cnx = 0;
 /*---------------------------------------------------------------------------*/
 PROCESS_THREAD(node_process, ev, data)
 {
-  static struct etimer send_periodic_timer;
-  static struct etimer cycle_timer;
-  static int boot = 1;
-  
+  static struct etimer send_periodic_timer,join_tsch_timer, init_mcst;
 
   PROCESS_BEGIN();
   
-  
+    NETSTACK_MAC.on();
     NETSTACK_ROUTING.root_start();
     prepare_mcast();
-
-
-  NETSTACK_MAC.on();
+    receive_data();
   
-  etimer_set(&cycle_timer, CLOCK_SECOND);
-  etimer_set(&send_periodic_timer, random_rand() % SEND_INTERVAL);
-
-  while(1) {
+    etimer_set(&join_tsch_timer, CLOCK_SECOND);
+    
+    while(!tsch_cnx){
     PROCESS_WAIT_EVENT_UNTIL(ev == PROCESS_EVENT_TIMER);
-
-    if (data == &cycle_timer){
-      if (!boot){
-	// timer de relevée des données
-	// recevoir udp et afficher
-	receive_data();
+      if (data == &join_tsch_timer){      
+	tsch_time = tsch_get_network_uptime_ticks();
+	LOG_INFO("tsch time %llu\n", tsch_time);
+	if (tsch_time != -1)
+	  tsch_cnx = 1;
+	else
+	  etimer_set(&join_tsch_timer, CLOCK_SECOND);
       }
-      else
-	boot = 0;
-      
-      time_to_sleep = tsch_get_network_uptime_ticks() + (CYCLE_DURATION * CLOCK_SECOND);
-      etimer_set(&cycle_timer, CYCLE_DURATION * CLOCK_SECOND);
-      etimer_set(&send_periodic_timer, random_rand() % SEND_INTERVAL);
-      
-      
     }
-    if (data == &send_periodic_timer){
-	multicast_send();
-	etimer_set(&send_periodic_timer, random_rand() % SEND_INTERVAL);
-    }
-  }
+  
+    etimer_set(&send_periodic_timer, random_rand() % (SEND_INTERVAL * CLOCK_SECOND));
+    etimer_set(&init_mcst, CLOCK_SECOND * 30);
 
+    while(1) {
+      PROCESS_WAIT_EVENT_UNTIL(ev == PROCESS_EVENT_TIMER);
+      if (data == &send_periodic_timer){ 
+	multicast_send();
+	etimer_set(&send_periodic_timer, random_rand() % (SEND_INTERVAL * CLOCK_SECOND));
+      }
+      if (data == &init_mcst){
+	//LOG_INFO("re init mcast\n");
+	//UIP_MCAST6.init();
+	etimer_set(&init_mcst, CLOCK_SECOND * 30);}
+    }
 
   PROCESS_END();
 }

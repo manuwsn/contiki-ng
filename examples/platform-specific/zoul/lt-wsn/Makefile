@@ -1,4 +1,4 @@
-CONTIKI_PROJECT = lt-sensor lt-sink rt
+CONTIKI_PROJECT = lt-sensor lt-sink rt mcst-test
 PROJECT_SOURCEFILES += rtcc-tools.c
 PROJECT_SOURCEFILES += lt-data.c lt-data-zoul.c
 

@@ -39,7 +39,7 @@ presence_callback(uint8_t value)
 
 #ifdef SENSOR_DLS
 #include "dev/tsl256x.h"
-#endif   /** SENSOR_CONF_LDR **/
+#endif   /** SENSOR_CONF_DLS **/
 
 
 #define TEST_LEDS_FAIL                    leds_off(LEDS_ALL); \
@@ -51,31 +51,34 @@ presence_callback(uint8_t value)
 static uint16_t get_voltage() {
   
   static uint8_t aux;
-  static uint16_t voltage;
+  static uint16_t voltage = 0;
   
   aux = 0;
   
   /* Initialize the power management block and signal the low-power PIC */
+  
   if(pm_enable() != PM_SUCCESS) {
     printf("PM: Failed to initialize\n");
     return 0;
   }
+ 
   /* Retrieve the firmware version and check expected */
+  
   if((pm_get_fw_ver(&aux) == PM_ERROR) ||
      (aux != PM_EXPECTED_VERSION)) {
     printf("PM: unexpected version 0x%02X\n", aux);
     return 0;
   }
   
-  printf("PM: firmware version 0x%02X OK\n", aux);
+  clock_delay_usec(10000);
   
   /* Read the battery voltage level */
+  
   if(pm_get_voltage(&voltage) != PM_SUCCESS) {
     printf("PM: error retrieving voltage\n");
     return 0;
   }
   
-  printf("PM: Voltage (raw) = %u\n", voltage);
   return voltage;
 }
 
@@ -127,7 +130,6 @@ ltdata_arch_read_sensors(ltdata_t *msg)
   
 #ifdef SENSOR_SHT25
   uint16_t temperature, humidity;
-  printf("SHT\n");
   SENSORS_ACTIVATE(sht25);
   if(!sht25.value(SHT25_VOLTAGE_ALARM)) {
     sht25.configure(SHT25_RESOLUTION, SHT2X_RES_14T_12RH);
@@ -147,14 +149,14 @@ ltdata_arch_read_sensors(ltdata_t *msg)
 #ifdef SENSOR_DHT22
   int16_t temperature22, humidity22;
   SENSORS_ACTIVATE(dht22);
-  clock_delay_usec(1000);
+  //clock_delay_usec(1000);
   if(dht22_read_all(&temperature22, &humidity22) != DHT22_ERROR) {
     printf("Temperature %02d.%02d ºC, ", temperature22 / 10, temperature22 % 10);
     printf("Humidity %02d.%02d RH\n", humidity22 / 10, humidity22 % 10);
     msg->sensors[SENSOR_TYPE] = DHT22;
     msg->sensors[TEMPERATURE_SENSOR] = temperature22;
     msg->sensors[HUMIDITY_SENSOR] = humidity22;
-  } else {
+  } else {	  
     printf("Failed to read the sensor\n");
   }
   SENSORS_DEACTIVATE(dht22);
@@ -192,30 +194,9 @@ else {
   }
 
 #endif
-  
-  static uint16_t voltage;
-  static uint8_t aux = 0;
-  
-  if(pm_enable() != PM_SUCCESS) {
-    //printf("PM: Failed to initialize\n");
-    //TEST_LEDS_FAIL;
-  }
-  //printf("PM enabled\n");
-  /* Retrieve the firmware version and check expected */
-  if((pm_get_fw_ver(&aux) == PM_ERROR) ||
-     (aux != PM_EXPECTED_VERSION)) {
-    printf("PM: unexpected version 0x%02X\n", aux);
-    //TEST_LEDS_FAIL;
-  }
-  clock_delay_usec(1000);
+ 
+    msg->voltage = get_voltage();
 
-  /* Read the battery voltage level */
-  
-  if(pm_get_voltage(&voltage) != PM_SUCCESS) {
-    printf("PM: error retrieving voltage\n");
-  }
-  
-  msg->voltage = get_voltage();
 
 }
 /*---------------------------------------------------------------------------*/

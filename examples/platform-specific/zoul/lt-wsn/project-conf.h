@@ -28,6 +28,11 @@
 
 #define LPM_CONF_MAX_PM             1
 
+
+#define WAIT_MCST_TIME 30
+#define RETRY_MCST_TIME 5
+#define MAX_ATTEMPT_MCST 3
+
 /*******************************************************/
 /******************* Configure cycles ******************/
 /*******************************************************/
@@ -57,11 +62,8 @@
 #define SLEEP_FREQUENCY 3
 #endif
 
-#define DATE_SECONDS DATE_CONF_SECONDS
+#define CURRENT_DATE CURRENT_CONF_DATE
 
-#define WAIT_MCST_TIME 10
-#define RETRY_MCST_TIME 11
-#define MAX_ATTEMPT_MCST 3
 
 /*******************************************************/
 /******************* Configure rtcc  *******************/
@@ -94,7 +96,10 @@
 #define SENSOR_LDR SENSOR_CONF_LDR
 #endif
 #ifdef SENSOR_CONF_DLS
-#define SENSOR_LDR SENSOR_CONF_DLS
+#define SENSOR_DLS SENSOR_CONF_DLS
+#endif
+#ifdef NO_SENSOR_CONF
+#define NO_SENSOR NO_SENSOR_CONF
 #endif
 
 #ifdef RPL_CONF_STATS
@@ -162,7 +167,7 @@
 /*******************************************************/
 
 /* Logging */
-#define LOG_CONF_LEVEL_RPL                         LOG_LEVEL_INFO
+#define LOG_CONF_LEVEL_RPL                         LOG_LEVEL_WARN
 #define LOG_CONF_LEVEL_TCPIP                       LOG_LEVEL_WARN
 #define LOG_CONF_LEVEL_IPV6                        LOG_LEVEL_WARN
 #define LOG_CONF_LEVEL_6LOWPAN                     LOG_LEVEL_WARN

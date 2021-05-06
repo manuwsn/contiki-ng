@@ -12,7 +12,7 @@ typedef struct  {
   uint32_t transmit;
   uint32_t listen;
   */
-  uint32_t voltage;
+  uint32_t voltage;    // node voltage (1/100 V)
 #ifdef SENSOR_BMP180
   uint16_t sensors[3];
 #endif
