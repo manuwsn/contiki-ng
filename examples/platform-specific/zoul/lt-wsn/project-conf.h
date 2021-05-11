@@ -28,10 +28,13 @@
 
 #define LPM_CONF_MAX_PM             1
 
-
-#define WAIT_MCST_TIME 30
+#ifdef WAIT_CONF_MCST_TIME
+#define WAIT_MCST_TIME WAIT_CONF_MCST_TIME
+#else
+#define WAIT_MCST_TIME 120
+#endif
 #define RETRY_MCST_TIME 5
-#define MAX_ATTEMPT_MCST 3
+#define MAX_ATTEMPT_MCST 2
 
 /*******************************************************/
 /******************* Configure cycles ******************/
@@ -40,7 +43,7 @@
 #ifdef JOIN_CONF_DURATION
 #define JOIN_DURATION JOIN_CONF_DURATION
 #else
-#define JOIN_DURATION 60
+#define JOIN_DURATION 120
 #endif
 
 #ifdef DEEP_CONF_MAX
@@ -53,13 +56,13 @@
 #ifdef CYCLE_CONF_DURATION
 #define CYCLE_DURATION CYCLE_CONF_DURATION
 #else
-#define CYCLE_DURATION 45
+#define CYCLE_DURATION 3600
 #endif
 
 #ifdef SLEEP_CONF_FREQUENCY
 #define SLEEP_FREQUENCY SLEEP_CONF_FREQUENCY
 #else
-#define SLEEP_FREQUENCY 3
+#define SLEEP_FREQUENCY 12
 #endif
 
 #define CURRENT_DATE CURRENT_CONF_DATE
@@ -163,11 +166,19 @@
 #endif /* WITH_SECURITY */
 
 /*******************************************************/
+/********************** RPL configuration **************/
+/*******************************************************/
+#define RPL_CONF_DIO_INTERVAL_MIN 10
+#define RPL_CONF_DIO_INTERVAL_DOUBLINGS 4 
+#define  RPL_CONF_PROBING_INTERVAL (20 * CLOCK_SECOND)
+#define RPL_CONF_DIS_INTERVAL (10 * CLOCK_SECOND)
+#define RPL_CONF_DIS_INTERVAL (10 * CLOCK_SECOND)
+/*******************************************************/
 /************* Other system configuration **************/
 /*******************************************************/
 
 /* Logging */
-#define LOG_CONF_LEVEL_RPL                         LOG_LEVEL_WARN
+#define LOG_CONF_LEVEL_RPL                         LOG_LEVEL_INFO
 #define LOG_CONF_LEVEL_TCPIP                       LOG_LEVEL_WARN
 #define LOG_CONF_LEVEL_IPV6                        LOG_LEVEL_WARN
 #define LOG_CONF_LEVEL_6LOWPAN                     LOG_LEVEL_WARN

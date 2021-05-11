@@ -63,11 +63,12 @@ AUTOSTART_PROCESSES(&node_process);
 /*---------------------------------------------------------------------------*/
 
 
-#define MAX_PAYLOAD_LEN 20
+#define MAX_PAYLOAD_LEN 28
 #define MCAST_SINK_UDP_PORT 3001 /* Host byte order */
 static struct uip_udp_conn * mcast_conn;
 static char buf[MAX_PAYLOAD_LEN];
 
+static uint64_t cycle_duration = CYCLE_DURATION;
 static uint64_t time_to_send = CYCLE_DURATION;
 static uint32_t sleep_frequency = SLEEP_FREQUENCY;
 static uint64_t starting_date = CURRENT_DATE;
@@ -93,17 +94,19 @@ multicast_send(void)
 
 
   //if(sleep_frequency > 0) {
-  /*  
-  printf("Send at %llu : %llu %lu\n",
-	     current_date,
-	     time_to_send,
-	     sleep_frequency);
+  /*
+  printf("Send at %llu, CD %llu, ttsend : %llu sleepF :%lu\n",
+	 current_date,
+	 cycle_duration,
+	 time_to_send,
+	 sleep_frequency);
   */
     memset(buf, 0, MAX_PAYLOAD_LEN);
     memcpy(buf, &current_date, sizeof(uint64_t));
     memcpy(&buf[sizeof(uint64_t)], &time_to_send, sizeof(uint64_t));
-    memcpy(&buf[2 * sizeof(uint64_t)], &sleep_frequency, sizeof(uint32_t));
-    uip_udp_packet_send(mcast_conn, buf, (2 * sizeof(uint64_t)) + sizeof(uint32_t));
+    memcpy(&buf[2 * sizeof(uint64_t)], &cycle_duration, sizeof(uint64_t));
+    memcpy(&buf[3 * sizeof(uint64_t)], &sleep_frequency, sizeof(uint32_t));
+    uip_udp_packet_send(mcast_conn, buf, (3 * sizeof(uint64_t)) + sizeof(uint32_t));
     //}
 }
 /*---------------------------------------------------------------------------*/
@@ -146,10 +149,10 @@ udp_rx_callback(struct simple_udp_connection *c,
   printf("\n");
 
   // when receiving, one can low the multicast sending frequency
-  /*
-  char ack = "K";
-  simple_udp_sendto(&server_conn, &ack,1, &sender_addr);
-  */
+  
+  char ack = 'K';
+  simple_udp_sendto(&server_conn, &ack,1, sender_addr);
+  
 
 }
 /*---------------------------------------------------------------------------*/
