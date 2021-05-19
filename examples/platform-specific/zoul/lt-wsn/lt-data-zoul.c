@@ -149,7 +149,7 @@ ltdata_arch_read_sensors(ltdata_t *msg)
 #ifdef SENSOR_DHT22
   int16_t temperature22, humidity22;
   SENSORS_ACTIVATE(dht22);
-  //clock_delay_usec(1000);
+  clock_delay_usec(1000);
   if(dht22_read_all(&temperature22, &humidity22) != DHT22_ERROR) {
     printf("Temperature %02d.%02d ºC, ", temperature22 / 10, temperature22 % 10);
     printf("Humidity %02d.%02d RH\n", humidity22 / 10, humidity22 % 10);
@@ -181,6 +181,7 @@ else {
 #ifdef SENSOR_DLS
   uint16_t light;
   SENSORS_ACTIVATE(tsl256x);
+  clock_delay_usec(10000);
   tsl256x.configure(TSL256X_INT_OVER, 0x15B8);
   light = tsl256x.value(TSL256X_VAL_READ);
   if(light != TSL256X_ERROR) {

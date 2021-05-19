@@ -26,24 +26,26 @@
 
 #define UIP_MCAST6_ROUTE_CONF_ROUTES 1
 
-#define LPM_CONF_MAX_PM             1
-
-#ifdef WAIT_CONF_MCST_TIME
-#define WAIT_MCST_TIME WAIT_CONF_MCST_TIME
-#else
-#define WAIT_MCST_TIME 120
-#endif
-#define RETRY_MCST_TIME 5
-#define MAX_ATTEMPT_MCST 2
+#define LPM_CONF_MAX_PM 1
 
 /*******************************************************/
 /******************* Configure cycles ******************/
-/*******************************************************/
+/*******************************************************/           
 
-#ifdef JOIN_CONF_DURATION
-#define JOIN_DURATION JOIN_CONF_DURATION
+#ifdef MCST_CONF_TIME_SLOT
+#define MCST_TIME_SLOT MCST_CONF_TIME_SLOT
 #else
-#define JOIN_DURATION 120
+#define MCST_TIME_SLOT 30
+#endif
+
+#define RETRY_MCST_TIME 5
+#define MAX_ATTEMPT_MCST 2
+
+
+#ifdef NETWORKING_CONF_TIME_SLOT
+#define NETWORKING_TIME_SLOT NETWORKING_CONF_TIME_SLOT
+#else
+#define NETWORKING_TIME_SLOT 30
 #endif
 
 #ifdef DEEP_CONF_MAX
@@ -56,13 +58,13 @@
 #ifdef CYCLE_CONF_DURATION
 #define CYCLE_DURATION CYCLE_CONF_DURATION
 #else
-#define CYCLE_DURATION 3600
+#define CYCLE_DURATION 60
 #endif
 
 #ifdef SLEEP_CONF_FREQUENCY
 #define SLEEP_FREQUENCY SLEEP_CONF_FREQUENCY
 #else
-#define SLEEP_FREQUENCY 12
+#define SLEEP_FREQUENCY 6
 #endif
 
 #define CURRENT_DATE CURRENT_CONF_DATE
@@ -176,6 +178,7 @@
 /*******************************************************/
 /************* Other system configuration **************/
 /*******************************************************/
+#define SIMPLE_ENERGEST_CONF_PERIOD (CLOCK_SECOND * 5)
 
 /* Logging */
 #define LOG_CONF_LEVEL_RPL                         LOG_LEVEL_INFO

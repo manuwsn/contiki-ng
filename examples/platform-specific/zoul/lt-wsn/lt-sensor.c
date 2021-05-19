@@ -9,6 +9,9 @@
 #include "storage/cfs/cfs.h"
 #include "storage/cfs/cfs-coffee.h"
 #include "sys/node-id.h"
+#include "sys/energest.h"
+
+#include "dev/watchdog.h"
 
 #include "sys/log.h"
 
@@ -23,6 +26,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include <lt-data.h>
 #include <rtcc-tools.h>
@@ -48,7 +52,6 @@
 #define UDP_SERVER_PORT	5678
 #define MCAST_SINK_UDP_PORT 3001 /* Host byte order */
 /*---------------------------------------------------------------------------*/
-#define NETWORKING_DURATION (DEEP_MAX * JOIN_DURATION)
 #define DATA_ACK_MAX_TIME 20
 #define RECORD_DATA_SIZE 100
 /*---------------------------------------------------------------------------*/
@@ -65,6 +68,8 @@ static struct etimer scan_network_timer;
 static struct etimer timeout_tx_timer;
 static struct etimer ack_timer;
 static struct etimer onesec_timer;
+static uint64_t networking_time_slot = NETWORKING_TIME_SLOT;
+static uint64_t mcst_time_slot = MCST_TIME_SLOT;
 /*--------------------------------------------------------------------*/
 static uint8_t rendezvous;
 static uint8_t initialized;
@@ -73,10 +78,19 @@ static uint8_t msg_acked;
 /*--------------------------------------------------------------------*/
 static uint8_t blue, red;
 /*--------------------------------------------------------------------*/
+struct data_file_handler {
+  int fd;
+  int rs;
+  char type;
+  char name[15];
+};
 static char CFS_EOF = (char) -2;
 static int fconf;
 static int fdata;
-static int fbckp;
+//static int fbckp;
+//static int fnrg;
+static struct data_file_handler data_files[3];
+static uint8_t i_file;
 static int read;
 /*--------------------------------------------------------------------*/
 static uint64_t cycle_duration;
@@ -119,6 +133,8 @@ tcpip_handler(void)
     memcpy(&time_to_send, &((uint8_t*)uip_appdata)[sizeof(uint64_t)], sizeof(uint64_t));
     memcpy(&cycle_duration,  &((uint8_t*)uip_appdata)[2 * sizeof(uint64_t)], sizeof(uint64_t));
     memcpy(&sense_nb,  &((uint8_t*)uip_appdata)[3 * sizeof(uint64_t)], sizeof(uint32_t));
+    memcpy(&mcst_time_slot,  &((uint8_t*)uip_appdata)[3 * sizeof(uint64_t) + sizeof(uint32_t)], sizeof(uint64_t));
+    memcpy(&networking_time_slot,  &((uint8_t*)uip_appdata)[4 * sizeof(uint64_t) + sizeof(uint32_t)], sizeof(uint64_t));
 
     LOG_INFO("tts %llu cd %llu fs %lu\n", time_to_send,cycle_duration,sense_nb );
     
@@ -127,6 +143,29 @@ tcpip_handler(void)
   }
   return;
 }
+/*---------------------------------------------------------------------------*/
+void energest_record(){
+  uint8_t nrg[32];
+  memset(nrg, 0, 4 * sizeof(uint64_t));
+  int fnrg = cfs_open("energest", CFS_WRITE | CFS_APPEND);
+  cfs_seek(fnrg, -1, CFS_SEEK_END);
+  if(start_time != 0)
+    cfs_write(fnrg, &start_time, sizeof(uint64_t));
+  else
+    cfs_write(fnrg, &time_offset, sizeof(uint64_t));
+  energest_flush();
+  uint64_t nrgtime = energest_type_time(ENERGEST_TYPE_CPU);
+  memcpy(nrg, &nrgtime, sizeof(uint64_t));
+  nrgtime = energest_type_time(ENERGEST_TYPE_LPM);
+  memcpy(&nrg[sizeof(uint64_t)], &nrgtime, sizeof(uint64_t));
+  nrgtime = energest_type_time(ENERGEST_TYPE_LISTEN);
+  memcpy(&nrg[2 * sizeof(uint64_t)], &nrgtime, sizeof(uint64_t));
+  nrgtime = energest_type_time(ENERGEST_TYPE_TRANSMIT);
+  memcpy(&nrg[3 * sizeof(uint64_t)], &nrgtime, sizeof(uint64_t));
+  cfs_write(fnrg, nrg ,4 * sizeof(uint64_t));
+  cfs_write(fnrg, &CFS_EOF, 1);
+  cfs_close(fnrg);
+} 
 /*---------------------------------------------------------------------------*/
 void record_sensor_data(){
   int fldata = cfs_open("lt-data", CFS_WRITE | CFS_APPEND);
@@ -183,19 +222,9 @@ PROCESS_THREAD(node_process, ev, data)
   
   PROCESS_BEGIN();
   LOG_INFO("START\n");
-  
   pm_enable();
-  /*
-  LOG_INFO("cycle %lu\n", pm_get_num_cycles());
-  fdata = cfs_open("lt-data", CFS_READ);
-  if (fdata < 0)
-    LOG_INFO("No lt-data file\n");
-  else {
-    LOG_INFO("Yes lt-data file\n");
-    cfs_close(fdata);
-  }
-  */
-  
+
+      
   fconf = cfs_open("conf", CFS_READ);
   
   if (fconf < 0) {
@@ -228,22 +257,12 @@ PROCESS_THREAD(node_process, ev, data)
       }
     }
   }
-
-  // conf file exist
-  
-
-  // read the current conf
-  
   fconf = cfs_open("conf", CFS_READ);
   uint8_t conf_buf[2];
   cfs_read(fconf, conf_buf, 2 * sizeof(uint8_t));
   cfs_close(fconf);
-
   
-  if (conf_buf[0] == 0){
-
-     // Always waiting for mcst
-    
+  if (conf_buf[0] == 0){                      // Always waiting for mcst
     if (conf_buf[1] < MAX_ATTEMPT_MCST){      // try again
 	conf_buf[1]++;                          
       fconf = cfs_open("conf", CFS_WRITE);
@@ -251,16 +270,15 @@ PROCESS_THREAD(node_process, ev, data)
       cfs_write(fconf, &CFS_EOF, 1);
       cfs_close(fconf);
     }
-    else {             // too much tries, remove conf and shutdwown
-      cfs_remove("conf");
-      
-      leds_off(LEDS_ALL);
+    else {                                    // too much try
+      cfs_remove("conf");                     // remove conf and shutdwown
+      leds_off(LEDS_ALL);                     // return to the initial conf
       leds_on(LEDS_GREEN);
       etimer_set(&onesec_timer, CLOCK_SECOND*2);
       PROCESS_WAIT_UNTIL(etimer_expired(&onesec_timer));
       leds_off(LEDS_ALL);
 
-      awake_time(5);
+      awake_time(2);
       pm_set_timeout(0x00);
       if(pm_shutdown_now(PM_HARD_SLEEP_CONFIG) == PM_SUCCESS) {
 	printf("PM: good night for %d\n",2);
@@ -269,17 +287,10 @@ PROCESS_THREAD(node_process, ev, data)
       }
       
     }
-    
-    // Multicast communication try 
-    // start network
-  
-    NETSTACK_MAC.on();
-    
-    etimer_set(&waiting_mcst_timer, WAIT_MCST_TIME * CLOCK_SECOND);
-    
+    NETSTACK_MAC.on();                           // Multicast communication try 
+    etimer_set(&waiting_mcst_timer, mcst_time_slot * CLOCK_SECOND);
     sink_conn = udp_new(NULL, UIP_HTONS(0), NULL);
     udp_bind(sink_conn, UIP_HTONS(MCAST_SINK_UDP_PORT));
-
     rendezvous = 0;
     LOG_INFO("Waiting multicast\n");
     while(!rendezvous) {
@@ -288,7 +299,7 @@ PROCESS_THREAD(node_process, ev, data)
 	tcpip_handler();
       if (ev == PROCESS_EVENT_TIMER){
 	if (data == &init_led_timer){
-	  if (blue){              // blue led blinking
+	  if (blue){                      
 	    leds_off(LEDS_ALL);
 	    blue=0;
 	  }
@@ -324,9 +335,11 @@ PROCESS_THREAD(node_process, ev, data)
     
     leds_off(LEDS_ALL);  // clear the blue led
     
-    // Writing conf file with received parameters
+    // Lets the multicast network living for other nodes
+    if (!etimer_expired(&waiting_mcst_timer))
+      PROCESS_WAIT_UNTIL(etimer_expired(&waiting_mcst_timer));
     
-    //LOG_INFO("receive parameter\n");
+    //LOG_INFO("Stop waiting Mcst\n");
     
     cfs_remove("conf");
     uint8_t buf[25];
@@ -342,11 +355,6 @@ PROCESS_THREAD(node_process, ev, data)
     
     LOG_INFO("receive parameter\nttsend %llu\ncycle duration %llu\nsense_nb %lu\nsense count %lu\n",time_to_send,cycle_duration,sense_nb,sense_count);
     
-    // Lets the multicast network living for other nodes
-    if (!etimer_expired(&waiting_mcst_timer))
-      PROCESS_WAIT_UNTIL(etimer_expired(&waiting_mcst_timer));
-    
-    //LOG_INFO("Stop waiting Mcst\n");
   }
 
   // A complete conf file exist, read it
@@ -383,6 +391,16 @@ PROCESS_THREAD(node_process, ev, data)
       }
   }
   
+  int fbckp = cfs_open("lt-bckp", CFS_READ);                 // if backup present
+  if (fbckp > -1) {                            // and no data   
+    fdata = cfs_open("lt-data", CFS_READ);               // need to compute a start time
+    if (fdata == -1){                                 // before 2 cycles duration
+      cfs_read(fbckp, &start_time, sizeof(uint64_t));
+      start_time -= (2 * cycle_duration);
+    }else
+      cfs_close(fdata);
+    cfs_close(fbckp);
+  }
   /********************************************************************/
   /****************************  SENSING PART *************************/
   /********************************************************************/
@@ -407,18 +425,8 @@ PROCESS_THREAD(node_process, ev, data)
     cfs_write(fconf, buf, 25 * sizeof(uint8_t));
     cfs_write(fconf, &CFS_EOF, 1);
     cfs_close(fconf);
-
-    /*
-    itts = 0;
-    for (itts = 0; itts < time_to_sense;itts++){
-      if (itts % 2 == 0)
-	leds_off(LEDS_ALL);
-      else
-	leds_on(LEDS_GREEN);
-      etimer_set(&onesec_timer, CLOCK_SECOND/3);
-      PROCESS_WAIT_UNTIL(etimer_expired(&onesec_timer));
-    }
-    */
+    
+    energest_record();
     awake_time(time_to_sense);
    
     pm_set_timeout(0x00);
@@ -455,29 +463,11 @@ PROCESS_THREAD(node_process, ev, data)
     cfs_write(fconf, buf, 25 * sizeof(uint8_t));
     cfs_write(fconf, &CFS_EOF, 1);
     cfs_close(fconf);
-    /*
-    itts = 0;
-    for (itts = 0; itts < time_to_sense;itts++){
-      if (itts % 2 == 0)
-	leds_off(LEDS_ALL);
-      else
-	leds_on(LEDS_GREEN);
-      etimer_set(&onesec_timer, CLOCK_SECOND/3);
-      PROCESS_WAIT_UNTIL(etimer_expired(&onesec_timer));
-    }
-    
-    if (time_to_sense == 0){
-      for (itts = 0; itts < 5;itts++){
-	if (itts % 2 == 0)
-	  leds_off(LEDS_ALL);
-	else
-	  leds_on(LEDS_BLUE);
-      etimer_set(&onesec_timer, CLOCK_SECOND/3);
-      PROCESS_WAIT_UNTIL(etimer_expired(&onesec_timer));
-      }
-    }
-    */
+   
     LOG_INFO("Conf %llu %llu %llu %llu %lu\n", start_time, cycle_duration, time_to_send, time_to_sense, sense_nb);
+
+    energest_record();
+    
     awake_time(time_to_sense);   
     pm_set_timeout(0x00);
     leds_off(LEDS_ALL);
@@ -493,15 +483,35 @@ PROCESS_THREAD(node_process, ev, data)
     /********************************************************************/
     // send data or backup it
 
-    NETSTACK_MAC.on();
+    // Prepare data files handler
+
+    data_files[0].fd =  cfs_open("lt-data", CFS_READ);
+    cfs_read(data_files[0].fd, &start_time, sizeof(uint64_t)); // current time
+    start_time += cycle_duration;                              // for the last
+    cfs_close(data_files[0].fd);                               // energest
     
+    data_files[0].fd =  cfs_open("lt-data", CFS_READ);
+    data_files[0].rs = sizeof(ltdata_t) + sizeof(uint64_t);
+    data_files[0].type='D';
+    strcpy(data_files[0].name, "lt-data");
+    
+    data_files[1].fd =  cfs_open("lt-bckp", CFS_READ);
+    data_files[1].rs = sizeof(ltdata_t) + sizeof(uint64_t);
+    data_files[1].type='B';
+    strcpy(data_files[1].name, "lt-bckp");
+    
+    data_files[2].fd =  cfs_open("energest", CFS_READ);
+    data_files[2].rs = 40;
+    data_files[2].type='R';
+    strcpy(data_files[2].name, "energest");
+    
+
+    NETSTACK_MAC.on();
     simple_udp_register(&client_conn, UDP_CLIENT_PORT, NULL,
 			UDP_SERVER_PORT,udp_rx_callback);
-
-    red = 1;
-    
+    red = 1;   
     sended = 0;
-    etimer_set(&wait_network_timer, CLOCK_SECOND * NETWORKING_DURATION);
+    etimer_set(&wait_network_timer, networking_time_slot * CLOCK_SECOND);
     etimer_set(&scan_network_timer, CLOCK_SECOND);
     
     while (!sended){
@@ -509,139 +519,95 @@ PROCESS_THREAD(node_process, ev, data)
       if(NETSTACK_ROUTING.node_is_reachable() &&
 	 NETSTACK_ROUTING.get_root_ipaddr(&dest_ipaddr)) {
 
+	leds_off(LEDS_ALL);
+	
 	char send_data[RECORD_DATA_SIZE];
 	memset(&send_data, 0, RECORD_DATA_SIZE);
-	
-	fbckp = cfs_open("lt-bckp", CFS_READ);
-	if (fbckp > 0){
-	  read = cfs_read(fbckp, &send_data[1], sizeof(uint64_t) + sizeof(ltdata_t));
-	
-	  while(read > 1){
-	    send_data[0] = 'B';
-	    msg_acked = 0;
-
-	    etimer_set(&timeout_tx_timer, DATA_ACK_MAX_TIME * CLOCK_SECOND);
-	    simple_udp_sendto(&client_conn,  send_data, 1 + sizeof(uint64_t) + sizeof(ltdata_t), &dest_ipaddr);
-	    etimer_set(&ack_timer, CLOCK_SECOND/4);
+	i_file = 0;
+	for (i_file = 0; i_file < 3; i_file++){
+	  
+	  if (data_files[i_file].fd != -1){
+	    read = cfs_read(data_files[i_file].fd, &send_data[1], data_files[i_file].rs);
 	    
-	    while(!msg_acked){
-	      PROCESS_WAIT_EVENT_UNTIL(ev == PROCESS_EVENT_TIMER);
-	      if (data == &ack_timer){
-		etimer_restart(&ack_timer);
-	      }
-	      else if (data == &timeout_tx_timer){
-		// reboot to try again as we was transmiting
-		// until wait network expired
-		// at least some records will be duplicated
-		awake_time(2);
-		pm_set_timeout(0x00);
-		leds_off(LEDS_ALL);
-		if(pm_shutdown_now(PM_HARD_SLEEP_CONFIG) == PM_SUCCESS) {
-		  printf("PM: good night for %d\n",2);
-		} else{
-		  TEST_LEDS_FAIL;
+	    while(read > 1){
+	      send_data[0] = data_files[i_file].type;
+	      msg_acked = 0;
+	      
+	      etimer_set(&timeout_tx_timer, DATA_ACK_MAX_TIME * CLOCK_SECOND);
+	      simple_udp_sendto(&client_conn,  send_data,  1 + data_files[i_file].rs, &dest_ipaddr);
+	      etimer_set(&ack_timer, CLOCK_SECOND/4);
+	      
+	      while(!msg_acked){
+		PROCESS_WAIT_EVENT_UNTIL(ev == PROCESS_EVENT_TIMER);
+		if (data == &ack_timer){
+		  etimer_restart(&ack_timer);
+		}
+		else if (data == &timeout_tx_timer){
+		  awake_time(2);
+		  pm_set_timeout(0x00);
+		  if(pm_shutdown_now(PM_HARD_SLEEP_CONFIG) == PM_SUCCESS) {
+		    printf("PM: good night for %d\n",2);
+		  } else{
+		    TEST_LEDS_FAIL;
+		  }
 		}
 	      }
+	      memset(&send_data, 0, RECORD_DATA_SIZE);
+	      read = cfs_read(data_files[i_file].fd, &send_data[1],  data_files[i_file].rs);
 	    }
-	    // Message sended and acknowledged
-	    memset(&send_data, 0, RECORD_DATA_SIZE);
-	    // next record
-	    read = cfs_read(fbckp, &send_data[1], sizeof(uint64_t) + sizeof(ltdata_t));
+	    cfs_close(data_files[i_file].fd);
+	    cfs_remove(data_files[i_file].name);   
 	  }
-	  cfs_close(fbckp);
-	  cfs_remove("lt-bckp");
 	}
-	
-	fdata = cfs_open("lt-data", CFS_READ);
-	
-	read = cfs_read(fdata, &send_data[1], sizeof(uint64_t) + sizeof(ltdata_t));
-	
-	while(read > 1){
-	  send_data[0] = 'D';
-	  msg_acked = 0;
-
-	  etimer_set(&timeout_tx_timer, DATA_ACK_MAX_TIME * CLOCK_SECOND);
-	  simple_udp_sendto(&client_conn,  send_data, 1 + sizeof(uint64_t) + sizeof(ltdata_t), &dest_ipaddr);
-	  etimer_set(&ack_timer, CLOCK_SECOND/4);
-
-	  while(!msg_acked){
-	    PROCESS_WAIT_EVENT_UNTIL(ev == PROCESS_EVENT_TIMER);
-	    if (data == &ack_timer){
-	      etimer_restart(&ack_timer);
-	    }
-	    else if (data == &timeout_tx_timer){
-	      // reboot to try again as we was transmiting
-	      // until wait network expired
-	      // at least some records will be duplicated
-	      awake_time(2);
-	      pm_set_timeout(0x00);
-	      leds_off(LEDS_ALL);
-	      if(pm_shutdown_now(PM_HARD_SLEEP_CONFIG) == PM_SUCCESS) {
-		printf("PM: good night for %d\n",2);
-	      } else{
-		TEST_LEDS_FAIL;
-	      }
-	    }
-	  }
-	  // Message sended and acknowledged
-	  memset(&send_data, 0, RECORD_DATA_SIZE);
-	  // next record
-	  read = cfs_read(fdata, &send_data[1], sizeof(uint64_t) + sizeof(ltdata_t));
-	}
-	cfs_close(fdata);
 	sended=1;
-      }                                  // pas ou plus de réseaux
-      else {
-	PROCESS_WAIT_EVENT_UNTIL(ev == PROCESS_EVENT_TIMER);
-	if (data == &scan_network_timer){            // scan pulse
-	  etimer_restart(&scan_network_timer);         // re generation
-	  if (etimer_expired(&wait_network_timer))   // Perte de réseau
-	    etimer_restart(&wait_network_timer);       // on tente à nouveau car on l'avait avant
+      }                                                       
+      else if (etimer_expired(&wait_network_timer)){      // end of wainting network
+	  
+	backup();
+	cfs_remove("lt-data");
+	
+	
+	// update the conf file
+	// to a computed time to sense from current one and cycle duration
+	// compute a new sense number and set sense count to 0
+
+	uint64_t k = time_to_send / sense_nb;
+	
+	if (cycle_duration < networking_time_slot) // should not occurs
+	  cycle_duration = networking_time_slot * 2;  // arbitrary cycle
+	time_to_send = cycle_duration - (1.2 * networking_time_slot);
+	
+	sense_nb = time_to_send / k;
+	sense_count = 0;
+	
+	cfs_remove("conf");
+	uint8_t buf[25];
+	buf[0] = 1;  // conf ok
+	memcpy(&buf[sizeof(uint8_t)], &time_to_send, sizeof(uint64_t));
+	memcpy(&buf[sizeof(uint8_t) + sizeof(uint64_t)], &cycle_duration, sizeof(uint64_t));
+	memcpy(&buf[sizeof(uint8_t) + 2 * sizeof(uint64_t)], &sense_nb, sizeof(uint32_t));
+	memcpy(&buf[sizeof(uint8_t) + 2 * sizeof(uint64_t) + sizeof(uint32_t)], &sense_count, sizeof(uint32_t));
+	fconf = cfs_open("conf", CFS_WRITE);
+	cfs_write(fconf, buf, 25 * sizeof(uint8_t));
+	cfs_write(fconf, &CFS_EOF, 1);
+	cfs_close(fconf);
+	
+	// awake for a next sensing
+	time_to_sense = time_to_send / sense_nb;
+	
+	awake_time(time_to_sense);
+	pm_set_timeout(0x00);
+	leds_off(LEDS_ALL);
+	if(pm_shutdown_now(PM_HARD_SLEEP_CONFIG) == PM_SUCCESS) {
+	  printf("PM: good night for %d\n",2);
+	} else{
+	  TEST_LEDS_FAIL;
 	}
-	else if (data == &wait_network_timer){      // end of wainting network
-
-	  // backup data file
-	  
-	  backup();
-	  cfs_remove("lt-data");
-
-	  // update the conf file
-	  // to a computed time to sense from current one and cycle duration
-	  // compute a new sense number and set sense count to 0
-
-	  uint64_t k = time_to_send / sense_nb;
-	  
-	  if (cycle_duration < NETWORKING_DURATION) // should not occurs
-	    cycle_duration = NETWORKING_DURATION * 2;  // arbitrary cycle
-	  time_to_send = cycle_duration - NETWORKING_DURATION;
-
-	  sense_nb = time_to_send / k;
-	  sense_count = 0;
-	  
-	  cfs_remove("conf");
-	  uint8_t buf[25];
-	  buf[0] = 1;  // conf ok
-	  memcpy(&buf[sizeof(uint8_t)], &time_to_send, sizeof(uint64_t));
-	  memcpy(&buf[sizeof(uint8_t) + sizeof(uint64_t)], &cycle_duration, sizeof(uint64_t));
-	  memcpy(&buf[sizeof(uint8_t) + 2 * sizeof(uint64_t)], &sense_nb, sizeof(uint32_t));
-	  memcpy(&buf[sizeof(uint8_t) + 2 * sizeof(uint64_t) + sizeof(uint32_t)], &sense_count, sizeof(uint32_t));
-	  fconf = cfs_open("conf", CFS_WRITE);
-	  cfs_write(fconf, buf, 25 * sizeof(uint8_t));
-	  cfs_write(fconf, &CFS_EOF, 1);
-	  cfs_close(fconf);
-
-	  // awake for a next sensing
-	  time_to_sense = time_to_send / sense_nb;
-	  
-	  awake_time(time_to_sense);
-	  pm_set_timeout(0x00);
-	  leds_off(LEDS_ALL);
-	  if(pm_shutdown_now(PM_HARD_SLEEP_CONFIG) == PM_SUCCESS) {
-	    printf("PM: good night for %d\n",2);
-	  } else{
-	    TEST_LEDS_FAIL;
-	  }
-	  
+	
+      } else {
+	PROCESS_WAIT_EVENT_UNTIL(ev == PROCESS_EVENT_TIMER); // pas ou plus de réseaux
+	if (data == &scan_network_timer){            // scan pulse
+	  etimer_restart(&scan_network_timer);       // generation
 	}
 	if (red){
 	  leds_off(LEDS_ALL);
@@ -657,46 +623,30 @@ PROCESS_THREAD(node_process, ev, data)
 	}
       }
     }
-    
     leds_off(LEDS_ALL);
-	  
-    // send backup if any
-    // remove data file
-
-    cfs_remove("lt-data");
-
-    // networking the remaining time
-
     if (!etimer_expired(&wait_network_timer))
       PROCESS_WAIT_UNTIL(etimer_expired(&wait_network_timer));
-
-    // Prepare a new cycle with a blank conf file
     
-      cfs_remove("conf");
-      fconf = cfs_open("conf", CFS_WRITE);
-      uint8_t buf[2];
-      buf[0] = 0;
-      buf[1] = 0;
-      memset(buf, 0, 2 * sizeof(uint8_t));
-      cfs_write(fconf, buf, 2 * sizeof(uint8_t));
-      cfs_write(fconf, &CFS_EOF, 1);
-      cfs_close(fconf);
+    energest_record();
     
-      awake_time(2);
-      pm_set_timeout(0x00);
-      leds_off(LEDS_ALL);
-      if(pm_shutdown_now(PM_HARD_SLEEP_CONFIG) == PM_SUCCESS) {
-	printf("PM: good night for %d\n",2);
-      } else{
-	TEST_LEDS_FAIL;
-      }
+    cfs_remove("conf");
+    fconf = cfs_open("conf", CFS_WRITE);
+    uint8_t buf[2];
+    buf[0] = 0;
+    buf[1] = 0;
+    memset(buf, 0, 2 * sizeof(uint8_t));
+    cfs_write(fconf, buf, 2 * sizeof(uint8_t));
+    cfs_write(fconf, &CFS_EOF, 1);
+    cfs_close(fconf);
+ 
+    awake_time(2);
+    pm_set_timeout(0x00);
+    leds_off(LEDS_ALL);
+    if(pm_shutdown_now(PM_HARD_SLEEP_CONFIG) == PM_SUCCESS) {
+      printf("PM: good night for %d\n",2);
+    } else{
+      TEST_LEDS_FAIL;
+    }
   }
-  /*
-  leds_off(LEDS_ALL);
-  leds_on(LEDS_BLUE);
-  etimer_set(&onesec_timer, CLOCK_SECOND*3);
-  PROCESS_WAIT_UNTIL(etimer_expired(&onesec_timer));
-  leds_off(LEDS_ALL);
-  */
   PROCESS_END();
 }
