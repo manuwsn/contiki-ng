@@ -140,6 +140,7 @@ tcpip_handler(void)
     
     sense_count = 0;
     rendezvous = 1;
+    etimer_set(&waiting_mcst_timer, mcst_time_slot * CLOCK_SECOND);
   }
   return;
 }
