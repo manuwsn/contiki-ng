@@ -32,20 +32,20 @@
 /******************* Configure cycles ******************/
 /*******************************************************/           
 
-#ifdef MCST_CONF_TIME_SLOT
-#define MCST_TIME_SLOT MCST_CONF_TIME_SLOT
+#ifdef DEFAULT_MCST_CONF_TIME_SLOT
+#define DEFAULT_MCST_TIME_SLOT DEFAULT_MCST_CONF_TIME_SLOT
 #else
-#define MCST_TIME_SLOT 30
+#define DEFAULT_MCST_TIME_SLOT 120 
 #endif
 
-#define RETRY_MCST_TIME 5
-#define MAX_ATTEMPT_MCST 2
+#define RETRY_MCST_TIME 10
+#define MAX_ATTEMPT_MCST 1234   
 
 
 #ifdef NETWORKING_CONF_TIME_SLOT
 #define NETWORKING_TIME_SLOT NETWORKING_CONF_TIME_SLOT
 #else
-#define NETWORKING_TIME_SLOT 30
+#define NETWORKING_TIME_SLOT 120
 #endif
 
 #ifdef DEEP_CONF_MAX

@@ -69,7 +69,8 @@ static struct etimer timeout_tx_timer;
 static struct etimer ack_timer;
 static struct etimer onesec_timer;
 static uint64_t networking_time_slot = NETWORKING_TIME_SLOT;
-static uint64_t mcst_time_slot = MCST_TIME_SLOT;
+static uint64_t default_mcst_time_slot = DEFAULT_MCST_TIME_SLOT;
+static uint64_t mcst_time_slot;
 /*--------------------------------------------------------------------*/
 static uint8_t rendezvous;
 static uint8_t initialized;
@@ -83,13 +84,14 @@ struct data_file_handler {
   int rs;
   char type;
   char name[15];
+  void (*backup)(void);
 };
 static char CFS_EOF = (char) -2;
 static int fconf;
 static int fdata;
 //static int fbckp;
 //static int fnrg;
-static struct data_file_handler data_files[3];
+static struct data_file_handler data_files[4];
 static uint8_t i_file;
 static int read;
 /*--------------------------------------------------------------------*/
@@ -140,7 +142,6 @@ tcpip_handler(void)
     
     sense_count = 0;
     rendezvous = 1;
-    etimer_set(&waiting_mcst_timer, mcst_time_slot * CLOCK_SECOND);
   }
   return;
 }
@@ -183,7 +184,7 @@ void record_sensor_data(){
   cfs_close(fldata);
 }
 /*---------------------------------------------------------------------------*/
-void backup(){
+void backup_data(){
   int bck = cfs_open("lt-bckp", CFS_WRITE | CFS_APPEND);
   int fldata = cfs_open("lt-data", CFS_READ);
   cfs_seek(bck, -1, CFS_SEEK_END);
@@ -198,6 +199,28 @@ void backup(){
   cfs_write(bck, &CFS_EOF, 1);
   cfs_close(bck);
   cfs_close(fldata);
+  cfs_remove("lt-data");
+}/*---------------------------------------------------------------------------*/
+void backup_nrg(){
+  int bck = cfs_open("energest-bck", CFS_WRITE | CFS_APPEND);
+  int fldata = cfs_open("energest", CFS_READ);
+  cfs_seek(bck, -1, CFS_SEEK_END);
+  uint8_t record[RECORD_DATA_SIZE];
+  memset(record, 0, RECORD_DATA_SIZE);
+  int lread = cfs_read(fldata, record, 5 * sizeof(uint64_t));
+  while (lread > 1){
+    cfs_write(bck, record, 5 * sizeof(uint64_t));
+    memset(record, 0, RECORD_DATA_SIZE);
+    lread = cfs_read(fldata, record, 5 * sizeof(uint64_t));
+  }
+  cfs_write(bck, &CFS_EOF, 1);
+  cfs_close(bck);
+  cfs_close(fldata);
+  cfs_remove("energest");
+}
+/*---------------------------------------------------------------------------*/
+void backup_none(){  // function of backup the backup file
+                     // do nothing to leave the file as is
 }
 /*---------------------------------------------------------------------------*/
 void awake_time(uint64_t tts){
@@ -225,12 +248,11 @@ PROCESS_THREAD(node_process, ev, data)
   LOG_INFO("START\n");
   pm_enable();
 
-      
   fconf = cfs_open("conf", CFS_READ);
   
   if (fconf < 0) {
     
-  /** first boot after flashing or too much reboot **/
+  /** first boot after flashing or full reset **/
 
     //LOG_INFO("First boot\n");
     btn = button_hal_get_by_index(0);
@@ -247,11 +269,10 @@ PROCESS_THREAD(node_process, ev, data)
 	  leds_on(LEDS_BLUE);
 	  
 	  fconf = cfs_open("conf", CFS_WRITE);
-	  uint8_t buf[2];
-	  buf[0] = 0;
-	  buf[1] = 0;
-	  memset(buf, 0, 2 * sizeof(uint8_t));
-	  cfs_write(fconf, buf, 2 * sizeof(uint8_t));
+	  uint8_t buf[10];
+	  memset(buf, 0, 10 * sizeof(uint8_t));
+	  memcpy(&buf[2], &default_mcst_time_slot, sizeof(uint64_t));
+	  cfs_write(fconf, buf, 10 * sizeof(uint8_t));
 	  cfs_write(fconf, &CFS_EOF, 1);
 	  cfs_close(fconf);
 	}
@@ -259,22 +280,23 @@ PROCESS_THREAD(node_process, ev, data)
     }
   }
   fconf = cfs_open("conf", CFS_READ);
-  uint8_t conf_buf[2];
-  cfs_read(fconf, conf_buf, 2 * sizeof(uint8_t));
+  uint8_t conf_buf[10];
+  cfs_read(fconf, conf_buf, 10 * sizeof(uint8_t));
+  memcpy(&mcst_time_slot, &conf_buf[2], sizeof(uint64_t));
   cfs_close(fconf);
   
   if (conf_buf[0] == 0){                      // Always waiting for mcst
     if (conf_buf[1] < MAX_ATTEMPT_MCST){      // try again
-	conf_buf[1]++;                          
+	conf_buf[1] = conf_buf[1] + 1;                          
       fconf = cfs_open("conf", CFS_WRITE);
-      cfs_write(fconf, conf_buf, 2 * sizeof(uint8_t));
+      cfs_write(fconf, conf_buf, 10 * sizeof(uint8_t));
       cfs_write(fconf, &CFS_EOF, 1);
       cfs_close(fconf);
     }
     else {                                    // too much try
       cfs_remove("conf");                     // remove conf and shutdwown
       leds_off(LEDS_ALL);                     // return to the initial conf
-      leds_on(LEDS_GREEN);
+      leds_on(LEDS_RED);
       etimer_set(&onesec_timer, CLOCK_SECOND*2);
       PROCESS_WAIT_UNTIL(etimer_expired(&onesec_timer));
       leds_off(LEDS_ALL);
@@ -336,21 +358,19 @@ PROCESS_THREAD(node_process, ev, data)
     
     leds_off(LEDS_ALL);  // clear the blue led
     
-    // Lets the multicast network living for other nodes
-    if (!etimer_expired(&waiting_mcst_timer))
-      PROCESS_WAIT_UNTIL(etimer_expired(&waiting_mcst_timer));
     
     //LOG_INFO("Stop waiting Mcst\n");
     
     cfs_remove("conf");
-    uint8_t buf[25];
+    uint8_t buf[33];
     buf[0] = 1;  // conf ok
     memcpy(&buf[sizeof(uint8_t)], &time_to_send, sizeof(uint64_t));
     memcpy(&buf[sizeof(uint8_t) + sizeof(uint64_t)], &cycle_duration, sizeof(uint64_t));
     memcpy(&buf[sizeof(uint8_t) + 2 * sizeof(uint64_t)], &sense_nb, sizeof(uint32_t));
     memcpy(&buf[sizeof(uint8_t) + 2 * sizeof(uint64_t) + sizeof(uint32_t)], &sense_count, sizeof(uint32_t));
+    memcpy(&buf[sizeof(uint8_t) + 2 * sizeof(uint64_t) + 2 * sizeof(uint32_t)], &mcst_time_slot, sizeof(uint64_t));
     fconf = cfs_open("conf", CFS_WRITE);
-    cfs_write(fconf, buf, 25 * sizeof(uint8_t));
+    cfs_write(fconf, buf, 33 * sizeof(uint8_t));
     cfs_write(fconf, &CFS_EOF, 1);
     cfs_close(fconf);
     
@@ -360,48 +380,52 @@ PROCESS_THREAD(node_process, ev, data)
 
   // A complete conf file exist, read it
     
-  uint8_t buf[25];
+  uint8_t buf[33];
   fconf = cfs_open("conf", CFS_READ);
-  cfs_read(fconf, buf, 25*sizeof(uint8_t));
+  cfs_read(fconf, buf, 33 * sizeof(uint8_t));
   cfs_close(fconf);
   memcpy(&time_to_send,   &buf[sizeof(uint8_t)], sizeof(uint64_t));
-  memcpy(&cycle_duration, &buf[sizeof(uint8_t)+ sizeof(uint64_t)], sizeof(uint64_t));
-  memcpy(&sense_nb,       &buf[sizeof(uint8_t)+ (2 * sizeof(uint64_t))], sizeof(uint32_t));
-  memcpy(&sense_count,    &buf[sizeof(uint8_t)+ (2 * sizeof(uint64_t)) + sizeof(uint32_t)], sizeof(uint32_t));
+  memcpy(&cycle_duration, &buf[sizeof(uint8_t) + sizeof(uint64_t)], sizeof(uint64_t));
+  memcpy(&sense_nb,       &buf[sizeof(uint8_t) + (2 * sizeof(uint64_t))], sizeof(uint32_t));
+  memcpy(&sense_count,    &buf[sizeof(uint8_t) + (2 * sizeof(uint64_t)) + sizeof(uint32_t)], sizeof(uint32_t));
+  memcpy(&mcst_time_slot, &buf[sizeof(uint8_t) + (2 * sizeof(uint64_t)) + 2 * sizeof(uint32_t)], sizeof(uint64_t));
 
-    LOG_INFO("read parameters\nttsend %llu\ncycle duration %llu\nsense_nb %lu\nsense count %lu\n",time_to_send,cycle_duration,sense_nb,sense_count);
-  if (sense_nb == 0) {    // end of cycle period : have to clear conf file and wait again
+    LOG_INFO("read parameters\nttsend %llu\ncycle duration %llu\nsense_nb %lu\nsense count %lu\n",
+	     time_to_send,cycle_duration,sense_nb,sense_count);
     
-      cfs_remove("conf");
-      fconf = cfs_open("conf", CFS_WRITE);
-      uint8_t buf[2];
-      buf[0] = 0;
-      buf[1] = 0;
-      memset(buf, 0, 2 * sizeof(uint8_t));
-      cfs_write(fconf, buf, 2 * sizeof(uint8_t));
-      cfs_write(fconf, &CFS_EOF, 1);
-      cfs_close(fconf);
+  if (sense_nb == 0) {    // no time to sense, wake up to networking
     
-      awake_time(2);
-      pm_set_timeout(0x00);
-      leds_off(LEDS_ALL);
-      if(pm_shutdown_now(PM_HARD_SLEEP_CONFIG) == PM_SUCCESS) {
-	printf("PM: good night for %d\n",2);
-      } else{
-	TEST_LEDS_FAIL;
-      }
+    sense_count= 2;         // go to sending at next wake up
+    sense_nb = 1;
+    
+    time_offset = 0;                 // record the date
+    record_sensor_data();             // Sense now and record
+                                      // update conf file
+    cfs_remove("conf");
+    memcpy(&buf[sizeof(uint8_t) + (2 * sizeof(uint64_t))], &sense_nb, sizeof(uint32_t));
+    memcpy(&buf[sizeof(uint8_t) + (2 * sizeof(uint64_t)) + sizeof(uint32_t)], &sense_count, sizeof(uint32_t));
+    fconf = cfs_open("conf", CFS_WRITE);
+    cfs_write(fconf, buf, 33 * sizeof(uint8_t));
+    cfs_write(fconf, &CFS_EOF, 1);
+    cfs_close(fconf);
+
+    awake_time(time_to_send);
+
+    // Lets the multicast network living for other nodes
+    if ((etimer_expiration_time(&waiting_mcst_timer)/CLOCK_SECOND) > time_to_send)
+      etimer_set(&waiting_mcst_timer,  time_to_send *CLOCK_SECOND);
+    if(!etimer_expired(&waiting_mcst_timer))
+       PROCESS_WAIT_UNTIL(etimer_expired(&waiting_mcst_timer));
+    
+    pm_set_timeout(0x00);
+    leds_off(LEDS_ALL);
+    if(pm_shutdown_now(PM_HARD_SLEEP_CONFIG) == PM_SUCCESS) {
+      printf("PM: good night for %d\n",2);
+    } else{
+      TEST_LEDS_FAIL;
+    }
   }
   
-  int fbckp = cfs_open("lt-bckp", CFS_READ);                 // if backup present
-  if (fbckp > -1) {                            // and no data   
-    fdata = cfs_open("lt-data", CFS_READ);               // need to compute a start time
-    if (fdata == -1){                                 // before 2 cycles duration
-      cfs_read(fbckp, &start_time, sizeof(uint64_t));
-      start_time -= (2 * cycle_duration);
-    }else
-      cfs_close(fdata);
-    cfs_close(fbckp);
-  }
   /********************************************************************/
   /****************************  SENSING PART *************************/
   /********************************************************************/
@@ -423,13 +447,21 @@ PROCESS_THREAD(node_process, ev, data)
     cfs_remove("conf");
     memcpy(&buf[sizeof(uint8_t) + (2 * sizeof(uint64_t)) +  sizeof(uint32_t)], &sense_count, sizeof(uint32_t));
     fconf = cfs_open("conf", CFS_WRITE);
-    cfs_write(fconf, buf, 25 * sizeof(uint8_t));
+    cfs_write(fconf, buf, 33 * sizeof(uint8_t));
     cfs_write(fconf, &CFS_EOF, 1);
     cfs_close(fconf);
     
+    
+    
     energest_record();
+    
     awake_time(time_to_sense);
-   
+    
+    if ((etimer_expiration_time(&waiting_mcst_timer)/CLOCK_SECOND) > time_to_sense)
+      etimer_set(&waiting_mcst_timer,  (time_to_sense - 1) *CLOCK_SECOND);
+    if(!etimer_expired(&waiting_mcst_timer))
+       PROCESS_WAIT_UNTIL(etimer_expired(&waiting_mcst_timer));
+    
     pm_set_timeout(0x00);
     leds_off(LEDS_ALL);
     if(pm_shutdown_now(PM_HARD_SLEEP_CONFIG) == PM_SUCCESS) {
@@ -461,7 +493,7 @@ PROCESS_THREAD(node_process, ev, data)
     cfs_remove("conf");
     memcpy(&buf[sizeof(uint8_t) + (2 * sizeof(uint64_t)) + sizeof(uint32_t)], &sense_count, sizeof(uint32_t));
     fconf = cfs_open("conf", CFS_WRITE);
-    cfs_write(fconf, buf, 25 * sizeof(uint8_t));
+    cfs_write(fconf, buf, 33 * sizeof(uint8_t));
     cfs_write(fconf, &CFS_EOF, 1);
     cfs_close(fconf);
    
@@ -469,7 +501,14 @@ PROCESS_THREAD(node_process, ev, data)
 
     energest_record();
     
-    awake_time(time_to_sense);   
+    awake_time(time_to_sense);
+    
+    // Lets the multicast network living for other nodes
+    if ((etimer_expiration_time(&waiting_mcst_timer)/CLOCK_SECOND) > time_to_sense)
+      etimer_set(&waiting_mcst_timer,  (time_to_sense - 1) *CLOCK_SECOND);
+    if(!etimer_expired(&waiting_mcst_timer))
+       PROCESS_WAIT_UNTIL(etimer_expired(&waiting_mcst_timer));
+    
     pm_set_timeout(0x00);
     leds_off(LEDS_ALL);
     if(pm_shutdown_now(PM_HARD_SLEEP_CONFIG) == PM_SUCCESS) {
@@ -485,29 +524,38 @@ PROCESS_THREAD(node_process, ev, data)
     // send data or backup it
 
     // Prepare data files handler
-
-    data_files[0].fd =  cfs_open("lt-data", CFS_READ);
-    cfs_read(data_files[0].fd, &start_time, sizeof(uint64_t)); // current time
-    start_time += cycle_duration;                              // for the last
-    cfs_close(data_files[0].fd);                               // energest
     
-    data_files[0].fd =  cfs_open("lt-data", CFS_READ);
+    data_files[0].fd =  cfs_open("lt-bckp", CFS_READ);
     data_files[0].rs = sizeof(ltdata_t) + sizeof(uint64_t);
-    data_files[0].type='D';
-    strcpy(data_files[0].name, "lt-data");
+    data_files[0].type='B';
+    strcpy(data_files[0].name, "lt-bckp");
+    data_files[0].backup = backup_none;
     
-    data_files[1].fd =  cfs_open("lt-bckp", CFS_READ);
-    data_files[1].rs = sizeof(ltdata_t) + sizeof(uint64_t);
-    data_files[1].type='B';
-    strcpy(data_files[1].name, "lt-bckp");
-    
-    data_files[2].fd =  cfs_open("energest", CFS_READ);
-    data_files[2].rs = 40;
-    data_files[2].type='R';
-    strcpy(data_files[2].name, "energest");
-    
+    data_files[1].fd =  cfs_open("energest-bckp", CFS_READ);
+    data_files[1].rs = 40;
+    data_files[1].type='Q';
+    strcpy(data_files[1].name, "energest-bckp");
+    data_files[1].backup = backup_none;
 
+    data_files[2].fd =  cfs_open("lt-data", CFS_READ);
+    cfs_read(data_files[2].fd, &start_time, sizeof(uint64_t)); // current time
+    start_time += cycle_duration;                              // for the last
+    cfs_close(data_files[2].fd);                               // energest
+    
+    data_files[2].fd =  cfs_open("lt-data", CFS_READ);
+    data_files[2].rs = sizeof(ltdata_t) + sizeof(uint64_t);
+    data_files[2].type='D';
+    strcpy(data_files[2].name, "lt-data");
+    data_files[2].backup = backup_data;
+    
+    data_files[3].fd =  cfs_open("energest", CFS_READ);
+    data_files[3].rs = 40;
+    data_files[3].type='R';
+    strcpy(data_files[3].name, "energest");
+    data_files[3].backup = backup_nrg;
+    
     NETSTACK_MAC.on();
+    
     simple_udp_register(&client_conn, UDP_CLIENT_PORT, NULL,
 			UDP_SERVER_PORT,udp_rx_callback);
     red = 1;   
@@ -525,7 +573,7 @@ PROCESS_THREAD(node_process, ev, data)
 	char send_data[RECORD_DATA_SIZE];
 	memset(&send_data, 0, RECORD_DATA_SIZE);
 	i_file = 0;
-	for (i_file = 0; i_file < 3; i_file++){
+	for (i_file = 0; i_file < 4; i_file++){
 	  
 	  if (data_files[i_file].fd != -1){
 	    read = cfs_read(data_files[i_file].fd, &send_data[1], data_files[i_file].rs);
@@ -544,6 +592,21 @@ PROCESS_THREAD(node_process, ev, data)
 		  etimer_restart(&ack_timer);
 		}
 		else if (data == &timeout_tx_timer){
+
+		  uint8_t ib_file = 0;                       // backup all files
+		  for (ib_file = 0; ib_file < 4; ib_file++)  // not sended
+		    if (data_files[ib_file].fd != -1)
+		      data_files[ib_file].backup();
+		  
+		  cfs_remove("conf");                             // restart with default mcst time slot
+		  fconf = cfs_open("conf", CFS_WRITE);
+		  uint8_t buf[10];
+		  memset(buf, 0, 10 * sizeof(uint8_t));
+		  memcpy(&buf[2], &default_mcst_time_slot, sizeof(uint64_t));
+		  cfs_write(fconf, buf, 10 * sizeof(uint8_t));
+		  cfs_write(fconf, &CFS_EOF, 1);
+		  cfs_close(fconf);
+		  
 		  awake_time(2);
 		  pm_set_timeout(0x00);
 		  if(pm_shutdown_now(PM_HARD_SLEEP_CONFIG) == PM_SUCCESS) {
@@ -557,46 +620,29 @@ PROCESS_THREAD(node_process, ev, data)
 	      read = cfs_read(data_files[i_file].fd, &send_data[1],  data_files[i_file].rs);
 	    }
 	    cfs_close(data_files[i_file].fd);
-	    cfs_remove(data_files[i_file].name);   
+	    cfs_remove(data_files[i_file].name);
+	    data_files[i_file].fd = -1;
 	  }
 	}
 	sended=1;
       }                                                       
-      else if (etimer_expired(&wait_network_timer)){      // end of wainting network
-	  
-	backup();
-	cfs_remove("lt-data");
+      else if (etimer_expired(&wait_network_timer)){      // end of waiting network
 	
+	i_file = 0;
+	for (i_file = 0; i_file < 4; i_file++)  // backup all files
+	  if (data_files[i_file].fd != -1)      // not sended
+	    data_files[i_file].backup();
 	
-	// update the conf file
-	// to a computed time to sense from current one and cycle duration
-	// compute a new sense number and set sense count to 0
-
-	uint64_t k = time_to_send / sense_nb;
-	
-	if (cycle_duration < networking_time_slot) // should not occurs
-	  cycle_duration = networking_time_slot * 2;  // arbitrary cycle
-	time_to_send = cycle_duration - (1.2 * networking_time_slot);
-	
-	sense_nb = time_to_send / k;
-	sense_count = 0;
-	
-	cfs_remove("conf");
-	uint8_t buf[25];
-	buf[0] = 1;  // conf ok
-	memcpy(&buf[sizeof(uint8_t)], &time_to_send, sizeof(uint64_t));
-	memcpy(&buf[sizeof(uint8_t) + sizeof(uint64_t)], &cycle_duration, sizeof(uint64_t));
-	memcpy(&buf[sizeof(uint8_t) + 2 * sizeof(uint64_t)], &sense_nb, sizeof(uint32_t));
-	memcpy(&buf[sizeof(uint8_t) + 2 * sizeof(uint64_t) + sizeof(uint32_t)], &sense_count, sizeof(uint32_t));
+	cfs_remove("conf");                             // restart with default mcst time slot
 	fconf = cfs_open("conf", CFS_WRITE);
-	cfs_write(fconf, buf, 25 * sizeof(uint8_t));
+	uint8_t buf[10];
+	memset(buf, 0, 10 * sizeof(uint8_t));
+	memcpy(&buf[2], &default_mcst_time_slot, sizeof(uint64_t));
+	cfs_write(fconf, buf, 10 * sizeof(uint8_t));
 	cfs_write(fconf, &CFS_EOF, 1);
 	cfs_close(fconf);
 	
-	// awake for a next sensing
-	time_to_sense = time_to_send / sense_nb;
-	
-	awake_time(time_to_sense);
+	awake_time(2);
 	pm_set_timeout(0x00);
 	leds_off(LEDS_ALL);
 	if(pm_shutdown_now(PM_HARD_SLEEP_CONFIG) == PM_SUCCESS) {
@@ -632,11 +678,10 @@ PROCESS_THREAD(node_process, ev, data)
     
     cfs_remove("conf");
     fconf = cfs_open("conf", CFS_WRITE);
-    uint8_t buf[2];
-    buf[0] = 0;
-    buf[1] = 0;
-    memset(buf, 0, 2 * sizeof(uint8_t));
-    cfs_write(fconf, buf, 2 * sizeof(uint8_t));
+    uint8_t buf[10];
+    memset(buf, 0, 10 * sizeof(uint8_t));
+    memcpy(&buf[2], &mcst_time_slot, sizeof(uint64_t));
+    cfs_write(fconf, buf, 10 * sizeof(uint8_t));
     cfs_write(fconf, &CFS_EOF, 1);
     cfs_close(fconf);
  

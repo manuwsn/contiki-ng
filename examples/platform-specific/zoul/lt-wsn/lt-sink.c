@@ -35,7 +35,7 @@
 #define UDP_CLIENT_PORT	8765
 #define UDP_SERVER_PORT	5678
 
-#define SEND_INTERVAL		  10
+#define SEND_INTERVAL		  5
 
 #if !NETSTACK_CONF_WITH_IPV6 || !UIP_CONF_ROUTER || !UIP_IPV6_MULTICAST || !UIP_CONF_IPV6_RPL
 #error "This example can not work with the current contiki configuration"
@@ -77,7 +77,7 @@ static char buf[MAX_PAYLOAD_LEN];
 
 static uint64_t _CYCLE_DURATION = CYCLE_DURATION;
 static uint32_t _SLEEP_FREQUENCY = SLEEP_FREQUENCY;
-static uint64_t _MCST_TIME_SLOT = MCST_TIME_SLOT;
+static uint64_t _MCST_TIME_SLOT = DEFAULT_MCST_TIME_SLOT;
 static uint64_t _NETWORKING_TIME_SLOT = NETWORKING_TIME_SLOT;
 
 static uint64_t cycle_duration = CYCLE_DURATION;
@@ -223,7 +223,8 @@ PT_THREAD(cmd_sensing(struct pt *pt, shell_output_func output, char *args))
   SHELL_OUTPUT(output,"OK\n");
 
   PT_END(pt);
-}/*---------------------------------------------------------------------------*/
+}
+/*---------------------------------------------------------------------------*/
 static
 PT_THREAD(cmd_networking(struct pt *pt, shell_output_func output, char *args))
 {
@@ -248,7 +249,7 @@ PT_THREAD(cmd_networking(struct pt *pt, shell_output_func output, char *args))
     SHELL_OUTPUT(output, "Networking time slot ?\n");
     PT_EXIT(pt);
   }
-  net = atol(args);
+  net = atoll(args);
     
   if(mcst < 10) {
     SHELL_OUTPUT(output, "Multicast time slot too low (min 10) %s\n", args);
@@ -266,10 +267,35 @@ PT_THREAD(cmd_networking(struct pt *pt, shell_output_func output, char *args))
   PT_END(pt);
 }
 /*---------------------------------------------------------------------------*/
+static
+PT_THREAD(cmd_date(struct pt *pt, shell_output_func output, char *args))
+{
+  
+  char *next_args;
+  uint64_t date;
+  
+  PT_BEGIN(pt);
+
+  SHELL_ARGS_INIT(args, next_args);
+
+  /* Get argument (date in sec) */
+  SHELL_ARGS_NEXT(args, next_args);
+  if(args == NULL) {
+    SHELL_OUTPUT(output, "date in seconds  ?\n");
+    PT_EXIT(pt);
+  }
+  date = atoll(args);
+  current_date = date;
+  SHELL_OUTPUT(output,"OK\n");
+
+  PT_END(pt);
+}
+/*---------------------------------------------------------------------------*/
   
 const struct shell_command_t sensing_shell_commands[] =
   {{"sensing", cmd_sensing, "'> sensing ' : modify cycle and sensing frequency"},
-   {"networking", cmd_networking, "'> networking ' : modify multicast and transmitting times slots"}};
+   {"networking", cmd_networking, "'> networking ' : modify multicast and transmitting times slots"},
+   {"date", cmd_date, "'> date ' : modify current date"}};
 static struct shell_command_set_t sensing_shell_command_set = {
   .next = NULL,
   .commands = sensing_shell_commands,
@@ -313,7 +339,7 @@ PROCESS_THREAD(node_process, ev, data)
       PROCESS_WAIT_EVENT_UNTIL(ev == PROCESS_EVENT_TIMER);
       if (data == &send_periodic_timer){ 
 	multicast_send();
-	etimer_set(&send_periodic_timer, random_rand() % (SEND_INTERVAL * CLOCK_SECOND));
+	etimer_set(&send_periodic_timer,(SEND_INTERVAL * CLOCK_SECOND));
       }
       if (data == &init_mcst){
 	//LOG_INFO("re init mcast\n");
