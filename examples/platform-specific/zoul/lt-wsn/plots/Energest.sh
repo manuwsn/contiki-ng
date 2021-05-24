@@ -1,10 +1,12 @@
 #!/bin/bash
 i=0
 time=0
+oldtime=0
 cpu=0
 lpm=0
 tx=0
 rx=0
+nrg=0
 for v in $(grep "$1" $2 | cut -d ' ' -f4-44)
 do
     case $i in
@@ -22,8 +24,15 @@ do
     i=$(((i+1)%40))
     if [ $i -eq 0 ]
     then
-	#echo -e $time \\t $cpu \\t $lpm \\t $tx \\t $rx
-	echo $time $(( ($cpu * 10 + $tx * 19 + $rx * 18)/32768))
+	nrg=$(($nrg + (($cpu * 10 + $tx * 19 + $rx * 18)/32768)))
+	if [ $oldtime -lt $time ]
+	then
+	    if date -d @$time +%D:%H:%M:%S &>/dev/null
+	    then
+		echo $(date -d @$time +%D:%H:%M:%S) $nrg
+		oldtime=$time
+	    fi
+	fi
 	time=0
 	cpu=0
 	lpm=0

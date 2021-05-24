@@ -16,7 +16,10 @@ do
     i=$(((i+1)%12))
     if [ $i -eq 0 ]
     then
-	echo $(date -d @$time +%D:%H:%M:%S) $volt
+	    if date -d @$time +%D:%H:%M:%S &>/dev/null
+	       then
+		   echo $(date -d @$time +%D:%H:%M:%S) $volt
+		   fi
 	time=0
 	volt=0
     fi

@@ -17,7 +17,10 @@ do
     i=$(((i+1)%16))
     if [ $i -eq 0 ]
     then
-	echo $(date -d @$time +%D:%H:%M:%S) $light
+	    if date -d @$time +%D:%H:%M:%S &>/dev/null
+	       then
+		   echo $(date -d @$time +%D:%H:%M:%S) $light
+		   fi
 	time=0
 	light=0
     fi
