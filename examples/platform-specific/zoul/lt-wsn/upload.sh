@@ -25,6 +25,9 @@ case $1 in
     sink)
 	make  POWERMGMT=1 UIPSTATS=1 RPLSTATS=1 $2 lt-sink.upload 
 	;;
+    router)
+	make  POWERMGMT=1 UIPSTATS=1 RPLSTATS=1 $2 lt-sensor.upload
+	;;
     *)
 	echo not understant $1
 	;;

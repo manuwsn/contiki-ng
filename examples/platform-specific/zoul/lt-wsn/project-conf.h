@@ -6,7 +6,6 @@
 /******************* Configure coffee ******************/
 /*******************************************************/
 
-
 #if CONTIKI_TARGET_CC2538DK || CONTIKI_TARGET_OPENMOTE_CC2538 || \
     CONTIKI_TARGET_ZOUL
 
@@ -32,20 +31,20 @@
 /******************* Configure cycles ******************/
 /*******************************************************/           
 
-#ifdef DEFAULT_MCST_CONF_TIME_SLOT
-#define DEFAULT_MCST_TIME_SLOT DEFAULT_MCST_CONF_TIME_SLOT
+#ifdef DEFAULT_RDV_CONF_TIME_SLOT
+#define DEFAULT_RDV_TIME_SLOT DEFAULT_RDV_CONF_TIME_SLOT
 #else
-#define DEFAULT_MCST_TIME_SLOT 120 
+#define DEFAULT_RDV_TIME_SLOT 30
 #endif
 
-#define RETRY_MCST_TIME 10
-#define MAX_ATTEMPT_MCST 1234   
+#define RETRY_RDV_TIME 10
+#define MAX_ATTEMPT_RDV 300   
 
 
 #ifdef NETWORKING_CONF_TIME_SLOT
 #define NETWORKING_TIME_SLOT NETWORKING_CONF_TIME_SLOT
 #else
-#define NETWORKING_TIME_SLOT 120
+#define NETWORKING_TIME_SLOT 30
 #endif
 
 #ifdef DEEP_CONF_MAX
