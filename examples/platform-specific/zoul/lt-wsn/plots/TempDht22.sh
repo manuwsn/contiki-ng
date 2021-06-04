@@ -4,7 +4,7 @@ i=0
 time=0
 temp=0
 hum=0
-for v in $(grep "$1" $2 | cut -d ' ' -f4-21)
+for v in $(grep "$1" $2 | cut -d ' ' -f13-30)
 do
     case $i in
 	[0-7])
