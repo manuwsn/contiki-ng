@@ -7,7 +7,7 @@ for v in $(grep "$1" $2 | cut -d ' ' -f4-19)
 do
     echo $v
     case $i in
-	[0-7])
+	[0-6])
 	    time=$(($time + ($v << ($i * 8)) ))
 	    ;;
 	14|15)

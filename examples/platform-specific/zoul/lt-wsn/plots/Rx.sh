@@ -7,7 +7,7 @@ time=0
 for v in $(grep "$1" $2 | cut -d ' ' -f5-20)
 do
     case $i in
-	[0-7])
+	[0-6])
 	    tx=$(($tx + ($v << ($i * 8)) ))
 	    ;;
 	8|9|1[0-5])

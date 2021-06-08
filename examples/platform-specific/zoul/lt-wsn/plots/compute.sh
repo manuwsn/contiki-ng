@@ -4,8 +4,8 @@ for a in $(cat sensors-adresses)
 do
     if grep  "^[0-9]* : $a " $1 > /dev/null
     then
-	### Tx rate
-	echo "'^[0-9]* : $a* ' $1" | xargs ./TxRate.sh > $a.txr
+	### Rx Time
+	grep "^[0-9]* : $a " $1 | cut -d ' ' -f1,4 | sort -uh > $a.rxt
 	### Cycles timestamps
 	echo "'^[0-9]* : [0-9]* ' $1 $a" | xargs ./Cycles.sh > $a.cyl
 	## Network trace
@@ -26,12 +26,27 @@ do
 	   then
 	       echo "'^[0-9]* : $a 6[68]' $1" |xargs ./LightA.sh > $a.lux
 	fi
-	
-
-	
-	
     fi
 done
+
+
+## plotting Rx Times
+if ls *.rxt &> /dev/null
+then
+    rxtfiles=$(ls *.rxt)
+    rxtfiles=$(echo $rxtfiles | sed s/' '/'"'' using 1:2','"'/g)
+    rxtfiles="\"$rxtfiles\" using 1:2"
+    gnuplot <<EOF
+set terminal png size 1200,800
+set output "rxtime.png"
+set grid
+set xlabel "Temps"
+set ylabel "Type"
+set title "Reception Time"
+plot $rxtfiles
+EOF
+    eog rxtime.png
+fi
 
 ## Plotting voltage
 if ls *.vlt &> /dev/null

@@ -9,7 +9,7 @@ rm $$.vlt.tmp &> /dev/null
 for v in $(grep "$1" $2 | cut -d ' ' -f13-28)
 do
     case $i in
-	[0-7])
+	[0-6])
 	    time=$(($time + ($v << ($i * 8)) ))
 	    ;;
 	8|9|1[0-1])

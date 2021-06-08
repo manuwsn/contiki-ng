@@ -66,12 +66,14 @@ static struct etimer ack_timer;
 static struct etimer onesec_timer;
 static struct etimer rdv_timer;
 static struct etimer tx_timer;
+static struct etimer tx_guard_timer;
 static uint64_t tx_time_slot = NETWORKING_TIME_SLOT;
 static uint64_t rdv_time_slot = DEFAULT_RDV_TIME_SLOT;
 /*--------------------------------------------------------------------*/
 static uint8_t msg_acked;
 static uint8_t files_sended;
 static uint8_t rdv;
+static int max_int_tx;
 /*--------------------------------------------------------------------*/
 struct data_file_handler {
   int fd;
@@ -107,6 +109,7 @@ PROCESS(tx_process, "Tx");
 AUTOSTART_PROCESSES(&node_process);
 /*---------------------------------------------------------------------------*/
 
+static uint64_t rdv_timestp_req, rdv_timestp_rsp;
 static void
 rdv_callback(struct simple_udp_connection *c,
          const uip_ipaddr_t *sender_addr,
@@ -118,17 +121,26 @@ rdv_callback(struct simple_udp_connection *c,
 {
   if (!rdv){
 
-    memcpy(&start_time,    data, sizeof(uint64_t));
-    memcpy(&time_to_send,  &data[sizeof(uint64_t)], sizeof(uint64_t));
-    memcpy(&cycle_duration,&data[2 * sizeof(uint64_t)], sizeof(uint64_t));
-    memcpy(&sense_nb,      &data[3 * sizeof(uint64_t)], sizeof(uint32_t));
-    memcpy(&rdv_time_slot, &data[3 * sizeof(uint64_t) + sizeof(uint32_t)], sizeof(uint64_t));
-    memcpy(&tx_time_slot,  &data[4 * sizeof(uint64_t) + sizeof(uint32_t)], sizeof(uint64_t));
-    sense_count = 0;
-    rdv = 1;
+    memcpy(&start_time,     data, sizeof(uint64_t));
+    memcpy(&time_to_send,   &data[sizeof(uint64_t)], sizeof(uint64_t));
+    memcpy(&cycle_duration, &data[2 * sizeof(uint64_t)], sizeof(uint64_t));
+    memcpy(&sense_nb,       &data[3 * sizeof(uint64_t)], sizeof(uint32_t));
+    memcpy(&rdv_time_slot,  &data[3 * sizeof(uint64_t) + sizeof(uint32_t)], sizeof(uint64_t));
+    memcpy(&tx_time_slot,   &data[4 * sizeof(uint64_t) + sizeof(uint32_t)], sizeof(uint64_t));
+    memcpy(&rdv_timestp_rsp,&data[5 * sizeof(uint64_t) + sizeof(uint32_t)], sizeof(uint64_t));
+
+    //LOG_INFO("tts %llu sense nb  %lu\n",time_to_send,sense_nb);
+    uint64_t now = clock_time();
+    if( rdv_timestp_rsp == rdv_timestp_req){
+      if (now > rdv_timestp_req)
+	if(time_to_send > (now - rdv_timestp_req)/2)
+	  time_to_send = time_to_send - (now - rdv_timestp_req)/2;
+      sense_count = 0;
+      rdv = 1;
+    }
   }
 
-  LOG_INFO("recu %llu pour %lu donc %llu\n",time_to_send,sense_nb,rdv_time_slot );
+  //LOG_INFO("tts corrigé %llu \n",time_to_send);
 }
 /*---------------------------------------------------------------------------*/
 static void
@@ -359,32 +371,52 @@ PROCESS_THREAD(tx_process, ev, data)
     data_files[3].backup = backup_nrg;
     
     files_sended = 0;
+    
+    uint8_t pkts_nb = sense_nb * 2;
+    if (data_files[0].fd != -1)
+      pkts_nb = pkts_nb + sense_nb;
+    if (data_files[1].fd != -1)
+      pkts_nb = pkts_nb + sense_nb;
+    max_int_tx = tx_time_slot / pkts_nb;
+    if (max_int_tx == 0)
+      max_int_tx =1;
+    
+    LOG_INFO("max int %d\n",  max_int_tx);
+    
     start_of_tx = clock_time();
+    
     etimer_set(&tx_timer, tx_time_slot * CLOCK_SECOND);
     NETSTACK_MAC.on();
     
     simple_udp_register(&udp_conn, UDP_CLIENT_PORT, NULL,
 			UDP_SERVER_PORT,tx_callback);
     
+    
     while(!files_sended){
       leds_off(LEDS_ALL);
       if(NETSTACK_ROUTING.node_is_reachable() &&
 	 NETSTACK_ROUTING.get_root_ipaddr(&dest_ipaddr)) {
+	
 	memset(&send_data, 0, RECORD_DATA_SIZE);
-	i_file = 0;
-	for (i_file = 0; i_file < 4; i_file++){
-	  if (data_files[i_file].fd != -1){	    
-	    file_read = cfs_read(data_files[i_file].fd, &send_data[1 + sizeof(uint64_t)], data_files[i_file].rs);
-	    while(file_read > 1){     
-	      send_data[0] = data_files[i_file].type;
-	      msg_acked = 0;	      
+	
 	      uint64_t netuse = clock_time() - start_of_tx;
 	      netuse /= CLOCK_SECOND;
 	      memcpy(&send_data[1],&netuse, sizeof(uint64_t));
 	      start_of_tx = clock_time();
 	      
-	      etimer_set(&onesec_timer, random_rand() % (CLOCK_SECOND/2));
-	      PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&onesec_timer));
+	
+	i_file = 0;
+	for (i_file = 0; i_file < 4; i_file++){
+	  if (data_files[i_file].fd != -1){	    
+	    file_read = cfs_read(data_files[i_file].fd, &send_data[1 + sizeof(uint64_t)], data_files[i_file].rs);
+	    
+	    
+	    while(file_read > 1){     
+	      send_data[0] = data_files[i_file].type;
+	      msg_acked = 0;
+
+	      etimer_set(&tx_guard_timer, random_rand() % (max_int_tx * CLOCK_SECOND));
+	      PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&tx_guard_timer));
 	      
 	      simple_udp_sendto(&udp_conn,  send_data,  1 + sizeof(uint64_t) + data_files[i_file].rs, &dest_ipaddr);
 	      etimer_set(&ack_timer, CLOCK_SECOND/4);
@@ -414,7 +446,7 @@ PROCESS_THREAD(tx_process, ev, data)
       else{
 	etimer_set(&onesec_timer, CLOCK_SECOND);
 	PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&onesec_timer)|| etimer_expired(&tx_timer));
-	if (data == &tx_timer){
+	if (etimer_expired(&tx_timer)){
 	  etimer_stop(&onesec_timer);
 	  backup();
 	  tx_ok = 0;
@@ -449,14 +481,18 @@ PROCESS_THREAD(rdv_process, ev, data)
   NETSTACK_MAC.on();
   simple_udp_register(&udp_conn, UDP_CLIENT_PORT, NULL,
 		      UDP_SERVER_PORT,rdv_callback);
+
   rdv = 0;
   while(!rdv){
     leds_off(LEDS_ALL);
     if(NETSTACK_ROUTING.node_is_reachable() &&
        NETSTACK_ROUTING.get_root_ipaddr(&dest_ipaddr)) {
-      char rdv_req = 'R';
+      uint8_t rdv_req[9];
+      rdv_req[0] = 'R';
+      rdv_timestp_req = clock_time();
+      memcpy(&rdv_req[1], &rdv_timestp_req, sizeof(uint64_t));
       etimer_set(&ack_timer, CLOCK_SECOND);
-      simple_udp_sendto(&udp_conn,  &rdv_req,  sizeof(char), &dest_ipaddr);
+      simple_udp_sendto(&udp_conn,  rdv_req,  sizeof(uint8_t) + sizeof(uint64_t), &dest_ipaddr);
       PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&ack_timer) || etimer_expired(&rdv_timer));
       if (etimer_expired(&rdv_timer)) {
 	 etimer_stop(&ack_timer);
@@ -519,6 +555,7 @@ PROCESS_THREAD(node_process, ev, data)
   /****************************************************************/
 
   if (read_conf()){
+    LOG_INFO("tts %llu sense_nb %lu, sense_count %lu\n", time_to_send, sense_nb, sense_count);
     if (its_time_to_send()){
       while(!tx_ok){
 	process_start(&tx_process, NULL);

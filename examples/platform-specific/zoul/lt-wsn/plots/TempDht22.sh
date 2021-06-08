@@ -7,7 +7,7 @@ hum=0
 for v in $(grep "$1" $2 | cut -d ' ' -f13-30)
 do
     case $i in
-	[0-7])
+	[0-6])
 	    time=$(($time + ($v << ($i * 8)) ));;
 	14|15)
 	    temp=$(($temp + ($v << (($i - 14) * 8)) ))

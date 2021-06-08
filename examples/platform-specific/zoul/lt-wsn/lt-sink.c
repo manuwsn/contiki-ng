@@ -129,6 +129,7 @@ udp_rx_callback(struct simple_udp_connection *c,
     memcpy(&rdv_data[3 * sizeof(uint64_t)], &sleep_frequency, sizeof(uint32_t));
     memcpy(&rdv_data[3 * sizeof(uint64_t) + sizeof(uint32_t)], &_RDV_TIME_SLOT, sizeof(uint64_t));
     memcpy(&rdv_data[4 * sizeof(uint64_t) + sizeof(uint32_t)], &_NETWORKING_TIME_SLOT, sizeof(uint64_t));
+    memcpy(&rdv_data[5 * sizeof(uint64_t) + sizeof(uint32_t)], &data[1], sizeof(uint64_t));
     
     printf("%llu : %llu  %llu %llu %lu %llu %llu\n",
 	   tsch_get_network_uptime_ticks() / CLOCK_SECOND,
@@ -138,7 +139,7 @@ udp_rx_callback(struct simple_udp_connection *c,
 	   sleep_frequency,
 	   _RDV_TIME_SLOT,
 	   _NETWORKING_TIME_SLOT);
-    simple_udp_sendto(&server_conn, rdv_data, (5 * sizeof(uint64_t)) + sizeof(uint32_t), sender_addr);
+    simple_udp_sendto(&server_conn, rdv_data, (6 * sizeof(uint64_t)) + sizeof(uint32_t), sender_addr);
   }
   else{
     printf("%llu : ", tsch_get_network_uptime_ticks() / CLOCK_SECOND);
