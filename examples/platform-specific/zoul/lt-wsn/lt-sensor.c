@@ -67,12 +67,15 @@ static struct etimer onesec_timer;
 static struct etimer rdv_timer;
 static struct etimer tx_timer;
 static struct etimer tx_guard_timer;
+static struct etimer rdv_guard_timer;
 static uint64_t tx_time_slot = NETWORKING_TIME_SLOT;
 static uint64_t rdv_time_slot = DEFAULT_RDV_TIME_SLOT;
+static uint64_t rdv_guard_time;
 /*--------------------------------------------------------------------*/
 static uint8_t msg_acked;
 static uint8_t files_sended;
 static uint8_t rdv;
+static uint8_t rdv_req[9];
 static int max_int_tx;
 /*--------------------------------------------------------------------*/
 struct data_file_handler {
@@ -120,6 +123,12 @@ rdv_callback(struct simple_udp_connection *c,
          uint16_t datalen)
 {
   if (!rdv){
+    
+    memcpy(&rdv_timestp_rsp,&data[5 * sizeof(uint64_t) + sizeof(uint32_t)], sizeof(uint64_t));
+    if (rdv_timestp_rsp != rdv_timestp_req){
+      rdv_timestp_rsp = 0;
+      return;
+    }
 
     memcpy(&start_time,     data, sizeof(uint64_t));
     memcpy(&time_to_send,   &data[sizeof(uint64_t)], sizeof(uint64_t));
@@ -129,18 +138,46 @@ rdv_callback(struct simple_udp_connection *c,
     memcpy(&tx_time_slot,   &data[4 * sizeof(uint64_t) + sizeof(uint32_t)], sizeof(uint64_t));
     memcpy(&rdv_timestp_rsp,&data[5 * sizeof(uint64_t) + sizeof(uint32_t)], sizeof(uint64_t));
 
-    //LOG_INFO("tts %llu sense nb  %lu\n",time_to_send,sense_nb);
+    LOG_INFO("tts %llu sense nb  %lu\n",time_to_send,sense_nb);
+    
     uint64_t now = clock_time();
-    if( rdv_timestp_rsp == rdv_timestp_req){
-      if (now > rdv_timestp_req)
-	if(time_to_send > (now - rdv_timestp_req)/2)
-	  time_to_send = time_to_send - (now - rdv_timestp_req)/2;
-      sense_count = 0;
-      rdv = 1;
+    
+    if (now > rdv_timestp_req) {
+      uint64_t delta = (now - rdv_timestp_req)/(2*CLOCK_SECOND);
+      if(time_to_send > delta) {
+	time_to_send = time_to_send - delta;
+	//LOG_INFO("tts ajusté %llu de %llu\n",time_to_send, delta);
+      }
+      else {
+	time_to_send = 0;
+      }
     }
-  }
 
-  //LOG_INFO("tts corrigé %llu \n",time_to_send);
+    now = now / CLOCK_SECOND;
+    uint64_t srdv = etimer_start_time(&rdv_timer) / CLOCK_SECOND;
+    uint64_t erdv = srdv + rdv_time_slot;
+    uint64_t ttsend = now + time_to_send;
+
+    //LOG_INFO("At %llu , from %llu until %llu\n", now, srdv, erdv);
+    //LOG_INFO("Send at %llu\n", ttsend);
+    
+    if (erdv > ttsend){
+      int adjust = erdv - ttsend;
+      etimer_adjust(&rdv_timer, -adjust*CLOCK_SECOND);
+      sense_nb = 0;  // we have no time to sense and sleep before tx
+      time_to_send = 0;
+
+      //LOG_INFO("Adjust of %d\n", -adjust);
+    }
+    else {
+      if (erdv > now && time_to_send > (erdv - now))   // To be absolutly certain
+	time_to_send = time_to_send - (erdv - now);
+      //LOG_INFO("time to send reduce of %llu, is : %llu\n", erdv - now, time_to_send);
+    }
+    
+    sense_count = 0;
+    rdv = 1;
+  }
 }
 /*---------------------------------------------------------------------------*/
 static void
@@ -355,8 +392,8 @@ PROCESS_THREAD(tx_process, ev, data)
 
     data_files[2].fd =  cfs_open("lt-data", CFS_READ);
     cfs_read(data_files[2].fd, &start_time, sizeof(uint64_t)); // current time
-    start_time += cycle_duration;                              // for the last
-    cfs_close(data_files[2].fd);                               // energest
+    start_time = start_time + cycle_duration;                              // for the uip rpl stats
+    cfs_close(data_files[2].fd);                              
     
     data_files[2].fd =  cfs_open("lt-data", CFS_READ);
     data_files[2].rs = sizeof(ltdata_t) + sizeof(uint64_t);
@@ -372,15 +409,29 @@ PROCESS_THREAD(tx_process, ev, data)
     
     files_sended = 0;
     
-    uint8_t pkts_nb = sense_nb * 2;
-    if (data_files[0].fd != -1)
-      pkts_nb = pkts_nb + sense_nb;
-    if (data_files[1].fd != -1)
-      pkts_nb = pkts_nb + sense_nb;
+    uint8_t pkts_nb = 0;
+    if(sense_nb != 0){
+      pkts_nb = sense_nb * 2;
+      if (data_files[0].fd != -1)
+	pkts_nb = pkts_nb + sense_nb;
+      if (data_files[1].fd != -1)
+	pkts_nb = pkts_nb + sense_nb;
+#if defined(UIP_STATS) || defined(RPL_STATS)
+      pkts_nb = pkts_nb + 1;
+#endif
+    }
+    else {
+      pkts_nb = 2;
+      if (data_files[0].fd != -1)
+	pkts_nb = pkts_nb + 1;
+      if (data_files[1].fd != -1)
+	pkts_nb = pkts_nb + 1;
+#if defined(UIP_STATS) || defined(RPL_STATS)
+      pkts_nb = pkts_nb + 1;
+#endif
+    }
     max_int_tx = tx_time_slot / pkts_nb;
-    if (max_int_tx == 0)
-      max_int_tx =1;
-    
+      
     LOG_INFO("max int %d\n",  max_int_tx);
     
     start_of_tx = clock_time();
@@ -399,11 +450,12 @@ PROCESS_THREAD(tx_process, ev, data)
 	
 	memset(&send_data, 0, RECORD_DATA_SIZE);
 	
-	      uint64_t netuse = clock_time() - start_of_tx;
-	      netuse /= CLOCK_SECOND;
-	      memcpy(&send_data[1],&netuse, sizeof(uint64_t));
-	      start_of_tx = clock_time();
+	uint64_t netuse = clock_time() - start_of_tx;
+	netuse /= CLOCK_SECOND;
+	memcpy(&send_data[1],&netuse, sizeof(uint64_t));
+	start_of_tx = clock_time();
 	      
+	random_init((uint16_t)start_of_tx);
 	
 	i_file = 0;
 	for (i_file = 0; i_file < 4; i_file++){
@@ -442,6 +494,23 @@ PROCESS_THREAD(tx_process, ev, data)
 	  }
 	}
 	files_sended=1;
+#if defined(UIP_STATS) || defined(RPL_STATS)
+	memset(send_data, 0, RECORD_DATA_SIZE);
+	send_data[0] = 'S';
+	memcpy(&send_data[1], &start_time, sizeof(uint64_t));
+	ltstatsdata_t s;
+	ltdata_read_stats_data(&s);
+	memcpy(&send_data[1 + sizeof(uint64_t)], &s, sizeof(ltstatsdata_t));
+	etimer_set(&ack_timer, CLOCK_SECOND);
+	msg_acked = 0;
+	while(!msg_acked){
+	  simple_udp_sendto(&udp_conn,  send_data,  1 + sizeof(uint64_t) + sizeof(ltstatsdata_t), &dest_ipaddr);
+	  PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&ack_timer));
+	  if (etimer_expired(&ack_timer))
+	    etimer_restart(&ack_timer);
+	}
+	etimer_stop(&ack_timer);
+#endif	
       }
       else{
 	etimer_set(&onesec_timer, CLOCK_SECOND);
@@ -478,6 +547,7 @@ PROCESS_THREAD(rdv_process, ev, data)
   
   start_of_rdv = clock_time();
   etimer_set(&rdv_timer, rdv_time_slot * CLOCK_SECOND);
+  rdv_guard_time = rdv_time_slot - (rdv_time_slot / 4);
   NETSTACK_MAC.on();
   simple_udp_register(&udp_conn, UDP_CLIENT_PORT, NULL,
 		      UDP_SERVER_PORT,rdv_callback);
@@ -487,11 +557,15 @@ PROCESS_THREAD(rdv_process, ev, data)
     leds_off(LEDS_ALL);
     if(NETSTACK_ROUTING.node_is_reachable() &&
        NETSTACK_ROUTING.get_root_ipaddr(&dest_ipaddr)) {
-      uint8_t rdv_req[9];
+      uint64_t ct = clock_time();
+      random_init((uint16_t)ct);
+      LOG_INFO("start networking at %llu with %u\n", ct, (uint16_t)ct);
       rdv_req[0] = 'R';
-      rdv_timestp_req = clock_time();
+      rdv_timestp_req = ct;
       memcpy(&rdv_req[1], &rdv_timestp_req, sizeof(uint64_t));
-      etimer_set(&ack_timer, CLOCK_SECOND);
+      etimer_set(&rdv_guard_timer, random_rand() % (rdv_guard_time * CLOCK_SECOND));
+      PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&rdv_guard_timer));
+      etimer_set(&ack_timer, 2 * CLOCK_SECOND);
       simple_udp_sendto(&udp_conn,  rdv_req,  sizeof(uint8_t) + sizeof(uint64_t), &dest_ipaddr);
       PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&ack_timer) || etimer_expired(&rdv_timer));
       if (etimer_expired(&rdv_timer)) {
@@ -505,7 +579,7 @@ PROCESS_THREAD(rdv_process, ev, data)
 	etimer_restart(&ack_timer);
     }
     else{
-      LOG_INFO("No more Ntw\n");
+      LOG_INFO("No Network\n");
       etimer_set(&onesec_timer, CLOCK_SECOND);
       PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&onesec_timer) || etimer_expired(&rdv_timer));
       if (data == &onesec_timer) {
@@ -555,13 +629,12 @@ PROCESS_THREAD(node_process, ev, data)
   /****************************************************************/
 
   if (read_conf()){
-    LOG_INFO("tts %llu sense_nb %lu, sense_count %lu\n", time_to_send, sense_nb, sense_count);
     if (its_time_to_send()){
-      while(!tx_ok){
+      // while(!tx_ok){
 	process_start(&tx_process, NULL);
 	PROCESS_WAIT_EVENT_UNTIL(ev == tx_event);
-	tx_ok = *((uint8_t*)data);
-      }
+	//tx_ok = *((uint8_t*)data);
+	//}
       
       leds_on(LEDS_BLUE);
       etimer_set(&onesec_timer, CLOCK_SECOND/2);

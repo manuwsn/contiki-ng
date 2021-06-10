@@ -62,20 +62,20 @@ void
 ltdata_read_stats_data(ltstatsdata_t *msg)
 {
 #ifdef RPL_STATS
-  msg->rpl_stats[SEND_DIO] = rpl_stats.send_dios;
-  msg->rpl_stats[RCV_DIO] = rpl_stats.received_dios;
-  msg->rpl_stats[SEND_DAO] = rpl_stats.send_daos;
-  msg->rpl_stats[RCV_DAO] = rpl_stats.received_daos;
-  msg->rpl_stats[SEND_DIS] = rpl_stats.send_diss;
-  msg->rpl_stats[RCV_DIS] = rpl_stats.received_diss;
-  msg->rpl_stats[SEND_ACKDAO] = rpl_stats.send_ackdaos;
-  msg->rpl_stats[RCV_ACKDAO] = rpl_stats.received_ackdaos;
+  memcpy(&msg->rpl_stats[SEND_DIO], &rpl_stats.send_dios, sizeof(uint16_t));
+  memcpy(&msg->rpl_stats[RCV_DIO], &rpl_stats.received_dios, sizeof(uint16_t));
+  memcpy(&msg->rpl_stats[SEND_DAO], &rpl_stats.send_daos, sizeof(uint16_t));
+  memcpy(&msg->rpl_stats[RCV_DAO], &rpl_stats.received_daos, sizeof(uint16_t));
+  memcpy(&msg->rpl_stats[SEND_DIS], &rpl_stats.send_diss, sizeof(uint16_t));
+  memcpy(&msg->rpl_stats[RCV_DIS], &rpl_stats.received_diss, sizeof(uint16_t));
+  memcpy(&msg->rpl_stats[SEND_ACKDAO], &rpl_stats.send_ackdaos, sizeof(uint16_t));
+  memcpy(&msg->rpl_stats[RCV_ACKDAO], &rpl_stats.received_ackdaos, sizeof(uint16_t));
 #endif
   
 #ifdef UIP_STATS
-  msg->uip_stats[SEND_IP] = (uint16_t) uip_stat.ip.sent;
-  msg->uip_stats[RCV_IP] =  (uint16_t) uip_stat.ip.recv;
-  msg->uip_stats[FWD_IP] = (uint16_t)  uip_stat.ip.forwarded;
-  msg->uip_stats[DROP_IP] = (uint16_t) uip_stat.ip.drop;
+  memcpy(&msg->uip_stats[SEND_IP], &uip_stat.ip.sent, sizeof(uint16_t));
+  memcpy(&msg->uip_stats[RCV_IP], &uip_stat.ip.recv, sizeof(uint16_t));
+  memcpy(&msg->uip_stats[FWD_IP], &uip_stat.ip.forwarded, sizeof(uint16_t));
+  memcpy(&msg->uip_stats[DROP_IP], &uip_stat.ip.drop, sizeof(uint16_t));
 #endif
 }
