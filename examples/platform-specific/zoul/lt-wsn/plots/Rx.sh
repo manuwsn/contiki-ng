@@ -4,14 +4,14 @@ i=0
 tx=0
 time=0
 
-for v in $(grep "$1" $2 | cut -d ' ' -f5-20)
+for v in $(grep -E "$1" $2 | cut -d ' ' -f5-20)
 do
     case $i in
 	[0-6])
 	    tx=$(($tx + ($v << ($i * 8)) ))
 	    ;;
 	8|9|1[0-5])
-	    time=$(($time + ($v << ($i * 8)) ))
+	    time=$(($time + ($v << (($i-8) * 8)) ))
 	    ;;
     esac
     

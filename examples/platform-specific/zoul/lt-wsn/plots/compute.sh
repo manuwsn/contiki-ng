@@ -9,12 +9,14 @@ do
 	### Cycles timestamps
 	echo "'^[0-9]* : [0-9]* ' $1 $a" | xargs ./Cycles.sh > $a.cyl
 	## Network trace
-	echo "'^[0-9]* : $a' $1 $i" |xargs ./Rx.sh > $a.tx
+	echo "'^[0-9]* : $a (66|68|71|81) ' $1 " |xargs ./Rx.sh > $a.tx
 	i=$(($i+1))
 	## All data contains volts info
 	echo "'^[0-9]* : $a 6[68]' $1" |xargs ./Volts.sh > $a.vlt
 	## Case for energest data
 	echo "'^[0-9]* : $a [78]1' $1" |xargs ./Energest.sh > $a.nrg
+	## UIP and RPL stats
+	echo "'^[0-9]* : $a 83' $1" |xargs ./UipRpl.sh > $a.uip
 	## Analysis of each sensor
 	## 2 0 : dht22
 	if grep -E "^[0-9]* : $a 6[68] ([0-9]+ ){12}2 0" $1 > /dev/null
@@ -29,6 +31,70 @@ do
     fi
 done
 
+
+
+## plotting RPL UIP stats
+if ls *.uip &> /dev/null
+then
+    uiprpl=""
+    uipfiles=$(ls *.uip)
+    uipfiles=$(echo $uipfiles | sed s/' '/'"'' using 1:2','"'/g)
+    uipfiles="\"$uipfiles\" using 1:2"
+    uiprpl="$uipfiles"
+    uipfiles=$(ls *.uip)
+    uipfiles=$(echo $uipfiles | sed s/' '/'"'' using 1:3','"'/g)
+    uipfiles="\"$uipfiles\" using 1:3"
+    uiprpl="$uiprpl, $uipfiles"
+    uipfiles=$(ls *.uip)
+    uipfiles=$(echo $uipfiles | sed s/' '/'"'' using 1:4','"'/g)
+    uipfiles="\"$uipfiles\" using 1:4"
+    uiprpl="$uiprpl, $uipfiles"
+    uipfiles=$(ls *.uip)
+    uipfiles=$(echo $uipfiles | sed s/' '/'"'' using 1:5','"'/g)
+    uipfiles="\"$uipfiles\" using 1:5"
+    uiprpl="$uiprpl, $uipfiles"
+    uipfiles=$(ls *.uip)
+    uipfiles=$(echo $uipfiles | sed s/' '/'"'' using 1:6','"'/g)
+    uipfiles="\"$uipfiles\" using 1:6"
+    uiprpl="$uiprpl, $uipfiles"
+    uipfiles=$(ls *.uip)
+    uipfiles=$(echo $uipfiles | sed s/' '/'"'' using 1:7','"'/g)
+    uipfiles="\"$uipfiles\" using 1:7"
+    uiprpl="$uiprpl, $uipfiles"
+    uipfiles=$(ls *.uip)
+    uipfiles=$(echo $uipfiles | sed s/' '/'"'' using 1:8','"'/g)
+    uipfiles="\"$uipfiles\" using 1:8"
+    uiprpl="$uiprpl, $uipfiles"
+    uipfiles=$(ls *.uip)
+    uipfiles=$(echo $uipfiles | sed s/' '/'"'' using 1:9','"'/g)
+    uipfiles="\"$uipfiles\" using 1:9"
+    uiprpl="$uiprpl, $uipfiles"
+    uipfiles=$(ls *.uip)
+    uipfiles=$(echo $uipfiles | sed s/' '/'"'' using 1:10','"'/g)
+    uipfiles="\"$uipfiles\" using 1:10"
+    uiprpl="$uiprpl, $uipfiles"
+    uipfiles=$(ls *.uip)
+    uipfiles=$(echo $uipfiles | sed s/' '/'"'' using 1:11','"'/g)
+    uipfiles="\"$uipfiles\" using 1:11"
+    uiprpl="$uiprpl, $uipfiles"
+    uipfiles=$(ls *.uip)
+    uipfiles=$(echo $uipfiles | sed s/' '/'"'' using 1:12','"'/g)
+    uipfiles="\"$uipfiles\" using 1:12"
+    uiprpl="$uiprpl, $uipfiles"
+    gnuplot <<EOF
+set terminal png size 1200,800
+set output "uiprpl.png"
+set xdata time
+set timefmt "%m/%d/%y:%H:%M:%S"
+set format x "%m-%d\n%H:%M"
+set grid
+set xlabel "Temps"
+set ylabel "Number"
+set title "UIP and RPL stats"
+plot $uiprpl
+EOF
+    eog uiprpl.png
+fi
 
 ## plotting Rx Times
 if ls *.rxt &> /dev/null
