@@ -52,7 +52,7 @@ do
     i=$((($i+1)%5))
     if [ $i -eq 0 ]
     then
-	echo $time $cpu $lpm $tx $rx
+	#echo $time $cpu $lpm $tx $rx
 	c=$(echo "($cpu * 20 + $tx * 40 + $rx * 19)/(32768*3600)" | bc -l)
 	tps=$(echo "($cpu+$lpm)/(32768*3600)" | bc -l)
 	#echo $tps $c

@@ -20,10 +20,13 @@ do
     i=$(((i+1)%18))
     if [ $i -eq 0 ]
     then
+	if [ $temp -ne 0 ]
+	then
 	    if date -d @$time +%D:%H:%M:%S &>/dev/null
-	       then
-		   echo $(date -d @$time +%D:%H:%M:%S) $temp $hum
+	    then
+		echo $(date -d @$time +%D:%H:%M:%S) $temp $hum
 	    fi
+	fi
 	time=0
 	temp=0
 	hum=0

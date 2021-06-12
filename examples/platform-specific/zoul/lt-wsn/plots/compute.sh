@@ -19,7 +19,7 @@ do
 	echo "'^[0-9]* : $a 83' $1" |xargs ./UipRpl.sh > $a.uip
 	## Analysis of each sensor
 	## 2 0 : dht22
-	if grep -E "^[0-9]* : $a 6[68] ([0-9]+ ){12}2 0" $1 > /dev/null
+	if grep -E "^[0-9]* : $a 6[68] ([0-9]+ ){20}2 0" $1 > /dev/null
 	   then
 	       echo "'^[0-9]* : $a 6[68]' $1" |xargs ./TempDht22.sh > $a.dht22
 	fi
@@ -205,8 +205,8 @@ fi
 if ls *.dht22 &> /dev/null
 then
     tempfiles=$(ls *.dht22)
-    tempfiles=$(echo $tempfiles | sed s/' '/'"'' using 1:2','"'/g)
-    tempfiles="\"$tempfiles\" using 1:2"
+    tempfiles=$(echo $tempfiles | sed s/' '/'"'' using 1:2 with lines','"'/g)
+    tempfiles="\"$tempfiles\" using 1:2 with lines"
     
     gnuplot <<EOF
 set terminal png size 1200,800

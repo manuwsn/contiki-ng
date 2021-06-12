@@ -60,19 +60,20 @@ do
     i=$(((i+1)%32))
     if [ $i -eq 0 ]
     then
-	echo $(date -d @$time +%D:%H:%M:%S) $senddio $rcvdio $senddis $rcvdis $sendack $rcvack $sendip $rcvip $fwip $dropip
+	echo $(date -d @$time +%D:%H:%M:%S) $senddio $rcvdio $senddao $rcvdao $senddis $rcvdis $sendack $rcvack $sendip $rcvip $fwdip $dropip
     
-	time=0
 	time=0
 	senddio=0
 	rcvdio=0
+	senddao=0
+	rcvdao=0
 	senddis=0
 	rcvdis=0
 	sendack=0
 	rcvack=0
 	sendip=0
 	rcvip=0
-	fwip=0
+	fwdip=0
 	dropip=0
     fi
 done
