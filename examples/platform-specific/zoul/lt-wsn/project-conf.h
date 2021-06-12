@@ -15,15 +15,6 @@
 #define DATAFILE "lt-data"
 
 
-/*******************************************************/
-/******************* Configure Multicast ***************/
-/*******************************************************/
-
-#ifndef UIP_MCAST6_CONF_ENGINE
-#define UIP_MCAST6_CONF_ENGINE UIP_MCAST6_ENGINE_MPL
-#endif
-
-#define UIP_MCAST6_ROUTE_CONF_ROUTES 1
 
 #define LPM_CONF_MAX_PM 1
 
@@ -34,7 +25,7 @@
 #ifdef DEFAULT_RDV_CONF_TIME_SLOT
 #define DEFAULT_RDV_TIME_SLOT DEFAULT_RDV_CONF_TIME_SLOT
 #else
-#define DEFAULT_RDV_TIME_SLOT 30
+#define DEFAULT_RDV_TIME_SLOT 60
 #endif
 
 #define RETRY_RDV_TIME 10
@@ -44,14 +35,9 @@
 #ifdef NETWORKING_CONF_TIME_SLOT
 #define NETWORKING_TIME_SLOT NETWORKING_CONF_TIME_SLOT
 #else
-#define NETWORKING_TIME_SLOT 30
+#define NETWORKING_TIME_SLOT 60
 #endif
 
-#ifdef DEEP_CONF_MAX
-#define DEEP_MAX DEEP_CONF_MAX
-#else
-#define DEEP_MAX 1
-#endif
 
 
 #ifdef CYCLE_CONF_DURATION

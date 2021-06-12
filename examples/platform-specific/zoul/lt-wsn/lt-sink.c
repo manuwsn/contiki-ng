@@ -18,7 +18,6 @@
 #include "dev/leds.h"
 #include "dev/sys-ctrl.h"
 #include "lib/list.h"
-//#include "power-mgmt.h"
 #include "rtcc.h"
 #include <stdio.h>
 #include <stdint.h>
@@ -36,7 +35,7 @@
 
 #define SEND_INTERVAL		  2
 
-#if !NETSTACK_CONF_WITH_IPV6 || !UIP_CONF_ROUTER || !UIP_IPV6_MULTICAST || !UIP_CONF_IPV6_RPL
+#if !NETSTACK_CONF_WITH_IPV6 || !UIP_CONF_ROUTER || !UIP_CONF_IPV6_RPL
 #error "This example can not work with the current contiki configuration"
 #error "Check the values of: NETSTACK_CONF_WITH_IPV6, UIP_CONF_ROUTER, UIP_CONF_IPV6_RPL"
 #endif
@@ -57,19 +56,13 @@
 /*---------------------------------------------------------------------------*/
 #define TEST_ALARM_SECOND                 15
 /*---------------------------------------------------------------------------*/
-//static uint8_t rtc_buffer[sizeof(simple_td_map)];
-//static simple_td_map *simple_td = (simple_td_map *)rtc_buffer;
-//static uint64_t date_seconds = DATE_SECONDS;
-/*---------------------------------------------------------------------------*/
-static struct simple_udp_connection server_conn;//, rdv_conn;
-
+static struct simple_udp_connection server_conn;
 PROCESS(node_process, "RPL Node");
 AUTOSTART_PROCESSES(&node_process);
 /*---------------------------------------------------------------------------*/
 
 
-#define MAX_PAYLOAD_LEN 44
-#define MCAST_SINK_UDP_PORT 3001 /* Host byte order */
+#define MAX_PAYLOAD_LEN 100
 
 static uint64_t _CYCLE_DURATION = CYCLE_DURATION;
 static uint32_t _SLEEP_FREQUENCY = SLEEP_FREQUENCY;
@@ -245,7 +238,7 @@ PT_THREAD(cmd_date(struct pt *pt, shell_output_func output, char *args))
   /* Get argument (date in sec) */
   SHELL_ARGS_NEXT(args, next_args);
   if(args == NULL) {
-    SHELL_OUTPUT(output, "date in seconds  ?\n");
+    SHELL_OUTPUT(output, "%llu\n", tsch_get_network_uptime_ticks() / CLOCK_SECOND);
     PT_EXIT(pt);
   }
   date = atoll(args);
@@ -265,7 +258,7 @@ static struct shell_command_set_t sensing_shell_command_set = {
   .commands = sensing_shell_commands,
 };
 
-static uint8_t tsch_cnx = 0;
+static uint8_t tsch_cnx;
 static struct etimer rdv_timer,join_tsch_timer;
 /*---------------------------------------------------------------------------*/
 PROCESS_THREAD(node_process, ev, data)
@@ -275,21 +268,19 @@ PROCESS_THREAD(node_process, ev, data)
   
     shell_command_set_register(&sensing_shell_command_set);
     
-  
     NETSTACK_MAC.on();
     NETSTACK_ROUTING.root_start();
     
     etimer_set(&join_tsch_timer, CLOCK_SECOND);
+    tsch_cnx = 0;
     while(!tsch_cnx){
       PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&join_tsch_timer));
-      if (data == &join_tsch_timer){      
-	tsch_time = tsch_get_network_uptime_ticks();
-	LOG_INFO("tsch time %llu\n", tsch_time);
-	if (tsch_time != -1)
-	  tsch_cnx = 1;
-	else
-	  etimer_set(&join_tsch_timer, CLOCK_SECOND);
-      }
+      tsch_time = tsch_get_network_uptime_ticks();
+      LOG_INFO("tsch time %llu\n", tsch_time);
+      if (tsch_time != -1)
+	tsch_cnx = 1;
+      else
+	etimer_set(&join_tsch_timer, CLOCK_SECOND);
     }
 
     simple_udp_register(&server_conn, UDP_SERVER_PORT, NULL,
@@ -299,7 +290,7 @@ PROCESS_THREAD(node_process, ev, data)
     while(1) {
       PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&rdv_timer));
       rdv_update();
-      etimer_restart(&rdv_timer);
+      etimer_reset(&rdv_timer);
     }
   PROCESS_END();
 }

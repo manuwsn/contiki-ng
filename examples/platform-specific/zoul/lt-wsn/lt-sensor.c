@@ -35,7 +35,7 @@
 #define LOG_LEVEL LOG_LEVEL_INFO
 
 
-#if !NETSTACK_CONF_WITH_IPV6 || !UIP_CONF_ROUTER || !UIP_IPV6_MULTICAST || !UIP_CONF_IPV6_RPL
+#if !NETSTACK_CONF_WITH_IPV6 || !UIP_CONF_ROUTER || !UIP_CONF_IPV6_RPL
 #error "This example can not work with the current contiki configuration"
 #error "Check the values of: NETSTACK_CONF_WITH_IPV6, UIP_CONF_ROUTER, UIP_CONF_IPV6_RPL"
 #endif
@@ -52,12 +52,10 @@
 #define UDP_SERVER_PORT	5678
 #define RDV_CLIENT_PORT	8766
 #define RDV_SERVER_PORT	5679
-#define MCAST_SINK_UDP_PORT 3001 /* Host byte order */
 /*---------------------------------------------------------------------------*/
-#define DATA_ACK_MAX_TIME 20
 #define RECORD_DATA_SIZE 100
 /*---------------------------------------------------------------------------*/
-static struct simple_udp_connection udp_conn;//, rdv_conn;
+static struct simple_udp_connection udp_conn;
 /*---------------------------------------------------------------------------*/
 static uint8_t rtc_buffer[sizeof(simple_td_map)];
 static simple_td_map *simple_td = (simple_td_map *)rtc_buffer;
@@ -77,6 +75,7 @@ static uint8_t files_sended;
 static uint8_t rdv;
 static uint8_t rdv_req[9];
 static int max_int_tx;
+static uint8_t pkts_nb;
 /*--------------------------------------------------------------------*/
 struct data_file_handler {
   int fd;
@@ -85,7 +84,7 @@ struct data_file_handler {
   char name[15];
   void (*backup)(void);
 };
-static char CFS_EOF = (char) -2;
+static char CFS_EOF = (char) -1;
 static struct data_file_handler data_files[4];
 static uint8_t i_file;
 static int file_read;
@@ -97,14 +96,10 @@ static uint32_t sense_nb;
 static uint64_t start_time;
 static uint64_t start_of_rdv;
 static uint64_t start_of_tx;
-//static uint8_t state;
 /*--------------------------------------------------------------------*/
 static uip_ipaddr_t dest_ipaddr;
 /*--------------------------------------------------------------------*/
 static 	char send_data[RECORD_DATA_SIZE];
-//static uint8_t msg_seqno;
-//static uint64_t itts;
-//static int ite2;
 /*---------------------------------------------------------------------------*/
 PROCESS(node_process, "LT-WSN Node");
 PROCESS(rdv_process, "Rdv");
@@ -287,6 +282,31 @@ static void backup(){
       data_files[i_file].backup();
 }
 /*---------------------------------------------------------------------------*/
+int backups_size(){
+  int size = 0;
+  int fd = cfs_open("lt-bckp", CFS_READ);
+  if (fd != -1){
+    uint8_t recdt[RECORD_DATA_SIZE];
+    int fr = cfs_read(fd, recdt, sizeof(uint64_t) + sizeof(ltdata_t));
+    while(fr > 1){
+      size++;
+      fr = cfs_read(fd, recdt, sizeof(uint64_t) + sizeof(ltdata_t));
+    }
+    cfs_close(fd);
+  }
+  int fg = cfs_open("energest-bckp", CFS_READ);
+  if (fg != 1) {
+    uint8_t recnrg[40];
+    int fn = cfs_read(fg, recnrg, 40);
+    while(fn > 1) {
+      size++;
+      fn = cfs_read(fg, recnrg, 40);
+    }
+    cfs_close(fg);
+  }
+  return size;
+} 
+/*---------------------------------------------------------------------------*/
 static int read_conf(){
   uint8_t buf[48];
   int fconf = cfs_open("conf", CFS_READ);
@@ -324,7 +344,7 @@ static int write_conf(){
 }
 /*---------------------------------------------------------------------------*/
 static int its_time_to_send(){
-  return sense_count > sense_nb;
+  return sense_count >= sense_nb;
 }
 /*---------------------------------------------------------------------------*/
 static void sensing(){
@@ -409,30 +429,23 @@ PROCESS_THREAD(tx_process, ev, data)
     
     files_sended = 0;
     
-    uint8_t pkts_nb = 0;
+    pkts_nb = 0;
     if(sense_nb != 0){
       pkts_nb = sense_nb * 2;
-      if (data_files[0].fd != -1)
-	pkts_nb = pkts_nb + sense_nb;
-      if (data_files[1].fd != -1)
-	pkts_nb = pkts_nb + sense_nb;
+      pkts_nb += backups_size();
 #if defined(UIP_STATS) || defined(RPL_STATS)
       pkts_nb = pkts_nb + 1;
 #endif
     }
     else {
       pkts_nb = 2;
-      if (data_files[0].fd != -1)
-	pkts_nb = pkts_nb + 1;
-      if (data_files[1].fd != -1)
-	pkts_nb = pkts_nb + 1;
+      pkts_nb += backups_size();
 #if defined(UIP_STATS) || defined(RPL_STATS)
       pkts_nb = pkts_nb + 1;
 #endif
     }
-    max_int_tx = tx_time_slot / pkts_nb;
-      
-    LOG_INFO("max int %d\n",  max_int_tx);
+
+    pkts_nb++;
     
     start_of_tx = clock_time();
     
@@ -454,8 +467,13 @@ PROCESS_THREAD(tx_process, ev, data)
 	netuse /= CLOCK_SECOND;
 	memcpy(&send_data[1],&netuse, sizeof(uint64_t));
 	start_of_tx = clock_time();
-	      
 	random_init((uint16_t)start_of_tx);
+	
+	if (netuse < tx_time_slot){
+	  max_int_tx = (tx_time_slot - netuse) / pkts_nb;
+	} else
+	  max_int_tx = tx_time_slot  / pkts_nb;
+
 	
 	i_file = 0;
 	for (i_file = 0; i_file < 4; i_file++){
@@ -505,7 +523,14 @@ PROCESS_THREAD(tx_process, ev, data)
 	msg_acked = 0;
 	while(!msg_acked){
 	  simple_udp_sendto(&udp_conn,  send_data,  1 + sizeof(uint64_t) + sizeof(ltstatsdata_t), &dest_ipaddr);
-	  PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&ack_timer));
+	  PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&ack_timer)|| etimer_expired(&tx_timer));
+	  if (etimer_expired(&tx_timer)){
+	    etimer_stop(&onesec_timer);
+	    backup();
+	    tx_ok = 0;
+	    process_post(&node_process,tx_event, &tx_ok);
+	    PROCESS_EXIT();
+	  }
 	  if (etimer_expired(&ack_timer))
 	    etimer_restart(&ack_timer);
 	}
@@ -547,7 +572,7 @@ PROCESS_THREAD(rdv_process, ev, data)
   
   start_of_rdv = clock_time();
   etimer_set(&rdv_timer, rdv_time_slot * CLOCK_SECOND);
-  rdv_guard_time = rdv_time_slot - (rdv_time_slot / 4);
+  rdv_guard_time = (rdv_time_slot - (rdv_time_slot / 4))/2;
   NETSTACK_MAC.on();
   simple_udp_register(&udp_conn, UDP_CLIENT_PORT, NULL,
 		      UDP_SERVER_PORT,rdv_callback);
@@ -582,17 +607,17 @@ PROCESS_THREAD(rdv_process, ev, data)
       LOG_INFO("No Network\n");
       etimer_set(&onesec_timer, CLOCK_SECOND);
       PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&onesec_timer) || etimer_expired(&rdv_timer));
-      if (data == &onesec_timer) {
-	leds_on(LEDS_BLUE);
-	etimer_restart(&onesec_timer);
-	PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&onesec_timer)) ;
-      }
-      else if (data == &rdv_timer) {
+      if (etimer_expired(&rdv_timer)) {
 	rdv_ok = 0;
 	 etimer_stop(&ack_timer);
 	 etimer_stop(&onesec_timer);
 	 process_post(&node_process, rdv_event, &rdv_ok);
 	 PROCESS_EXIT();
+      }
+      if (etimer_expired(&onesec_timer)) {
+	leds_on(LEDS_BLUE);
+	etimer_restart(&onesec_timer);
+	PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&onesec_timer)) ;
       }
     }
   }
@@ -609,12 +634,6 @@ PROCESS_THREAD(rdv_process, ev, data)
 }
 /*---------------------------------------------------------------------------*/
 
-#define BOOT 0
-#define SENSING 1
-#define RDV 2
-#define TX 3
-#define SLEEP 4
-
 PROCESS_THREAD(node_process, ev, data)
 {
   
@@ -630,11 +649,8 @@ PROCESS_THREAD(node_process, ev, data)
 
   if (read_conf()){
     if (its_time_to_send()){
-      // while(!tx_ok){
-	process_start(&tx_process, NULL);
-	PROCESS_WAIT_EVENT_UNTIL(ev == tx_event);
-	//tx_ok = *((uint8_t*)data);
-	//}
+      process_start(&tx_process, NULL);
+      PROCESS_WAIT_EVENT_UNTIL(ev == tx_event);
       
       leds_on(LEDS_BLUE);
       etimer_set(&onesec_timer, CLOCK_SECOND/2);
