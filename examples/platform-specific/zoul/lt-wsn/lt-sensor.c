@@ -84,7 +84,6 @@ struct data_file_handler {
   char name[15];
   void (*backup)(void);
 };
-static char CFS_EOF = (char) -1;
 static struct data_file_handler data_files[4];
 static uint8_t i_file;
 static int file_read;
@@ -192,7 +191,6 @@ void record_energest_data(){
   uint64_t nrgtime = 0;
   memset(nrg, 0, 4 * sizeof(uint64_t));
   int fnrg = cfs_open("energest", CFS_WRITE | CFS_APPEND);
-  cfs_seek(fnrg, -1, CFS_SEEK_END);
   
   if (sense_nb == 0){
     cfs_write(fnrg, &start_time, sizeof(uint64_t));
@@ -212,13 +210,11 @@ void record_energest_data(){
   nrgtime = energest_type_time(ENERGEST_TYPE_TRANSMIT);
   memcpy(&nrg[3 * sizeof(uint64_t)], &nrgtime, sizeof(uint64_t));
   cfs_write(fnrg, nrg ,4 * sizeof(uint64_t));
-  cfs_write(fnrg, &CFS_EOF, 1);
   cfs_close(fnrg);
 } 
 /*---------------------------------------------------------------------------*/
 void record_sensor_data(){
   int fldata = cfs_open("lt-data", CFS_WRITE | CFS_APPEND);
-  cfs_seek(fldata, -1, CFS_SEEK_END);
   ltdata_t ltdata;
   memset(&ltdata, 0, sizeof(ltdata_t));
   ltdata_read_sensor_data(&ltdata);
@@ -232,14 +228,12 @@ void record_sensor_data(){
     cfs_write(fldata, &vtime, sizeof(uint64_t));
   }
   cfs_write(fldata, &ltdata,sizeof(ltdata_t));
-  cfs_write(fldata, &CFS_EOF, 1);
   cfs_close(fldata);
 }
 /*---------------------------------------------------------------------------*/
 void backup_data(){
   int bck = cfs_open("lt-bckp", CFS_WRITE | CFS_APPEND);
   int fldata = cfs_open("lt-data", CFS_READ);
-  cfs_seek(bck, -1, CFS_SEEK_END);
   uint8_t record[RECORD_DATA_SIZE];
   memset(record, 0, RECORD_DATA_SIZE);
   int lread = cfs_read(fldata, record, sizeof(uint64_t) + sizeof(ltdata_t));
@@ -248,7 +242,6 @@ void backup_data(){
     memset(record, 0, RECORD_DATA_SIZE);
     lread = cfs_read(fldata, record, sizeof(uint64_t) + sizeof(ltdata_t));
   }
-  cfs_write(bck, &CFS_EOF, 1);
   cfs_close(bck);
   cfs_close(fldata);
   cfs_remove("lt-data");
@@ -257,7 +250,6 @@ void backup_data(){
 void backup_nrg(){
   int bck = cfs_open("energest-bckp", CFS_WRITE | CFS_APPEND);
   int flnrg = cfs_open("energest", CFS_READ);
-  cfs_seek(bck, -1, CFS_SEEK_END);
   uint8_t record[40];
   memset(record, 0, 40);
   int lread = cfs_read(flnrg, record, 5 * sizeof(uint64_t));
@@ -266,7 +258,6 @@ void backup_nrg(){
     memset(record, 0, 40);
     lread = cfs_read(flnrg, record, 5 * sizeof(uint64_t));
   }
-  cfs_write(bck, &CFS_EOF, 1);
   cfs_close(bck);
   cfs_close(flnrg);
   cfs_remove("energest");
@@ -338,7 +329,6 @@ static int write_conf(){
   if (fconf == -1)
     return 0;
   cfs_write(fconf, buf, 48 * sizeof(uint8_t));
-  cfs_write(fconf, &CFS_EOF, 1);
   cfs_close(fconf);
   return 1;
 }
