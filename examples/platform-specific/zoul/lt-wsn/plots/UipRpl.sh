@@ -13,11 +13,13 @@ rcvip=0
 fwip=0
 dropip=0
 
+dating=$3
+
 for v in $(grep "$1" $2 | cut -d ' ' -f5-36)
 do
     case $i in
 	[0-7])
-	    time=$(($time + ($v << ($i * 8)) ))
+	    time=$(($time + ($v << ($i * 7)) ))
 	    ;;
 	8|9)
 	    senddio=$(($senddio + ($v << (($i-8) * 8)) ))
@@ -60,7 +62,12 @@ do
     i=$(((i+1)%32))
     if [ $i -eq 0 ]
     then
-	echo $(date -d @$time +%D:%H:%M:%S) $senddio $rcvdio $senddao $rcvdao $senddis $rcvdis $sendack $rcvack $sendip $rcvip $fwdip $dropip
+	if [ $dating ]
+	   then
+	       echo $(date -d @$time +%D:%H:%M:%S) $senddio $rcvdio $senddao $rcvdao $senddis $rcvdis $sendack $rcvack $sendip $rcvip $fwdip $dropip
+	else
+	    echo $time  $senddio $rcvdio $senddao $rcvdao $senddis $rcvdis $sendack $rcvack $sendip $rcvip $fwdip $dropip
+	fi
     
 	time=0
 	senddio=0

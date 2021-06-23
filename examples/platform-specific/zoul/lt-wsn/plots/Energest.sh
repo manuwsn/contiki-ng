@@ -10,17 +10,18 @@ nrg=0
 C=$((600))
 ecu=0
 prc=0
+dating=$3
 
 for v in $(grep "$1" $2 | cut -d ' ' -f13-53)
 do
     case $i in
-	[0-6])
+	[0-5])
 	    time=$(($time + ($v << ($i * 8)) ));;
 	8|9|1[0-1])
 	    cpu=$(($cpu +   ($v << (($i - 8) * 8)) ));; 
 	1[6-9])
 	    lpm=$(($lpm +   ($v << (($i - 16) * 8)) ));;
-	2[4-9]|3[0-1])
+	2[4-9]|3[01])
 	    tx=$(($tx +     ($v << (($i - 24) * 8)) ));;
 	3[2-9])
 	    rx=$(($rx +     ($v << (($i - 32) * 8)) ));;	 
@@ -60,8 +61,13 @@ do
 	prc=$(echo "$prc + $tps*100/$d" | bc -l)
 	
 	ecu=$(echo "100-$prc" | bc -l)
-	
-	echo $(date -d @$time +%D:%H:%M:%S) $ecu >> $$.nrg.tmp
+
+	if [ $dating ]
+	   then
+	       echo $(date -d @$time +%D:%H:%M:%S) $ecu >> $$.nrg.tmp
+	else
+	    echo $time $ecu >> $$.nrg.tmp
+	fi
     fi
 done
 cat $$.nrg.tmp
